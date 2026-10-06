@@ -1,198 +1,126 @@
-# Import necessary libraries and modules
-from bson.objectid import ObjectId
-from flask import Flask, request, jsonify
+import os
+import re
+
+from flask import Flask, jsonify, request
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
 
-# Import custom modules for database interactions
-import usersDB
-import projectsDB
-import hardwareDB
+import usersDatabase
 
-# Define the MongoDB connection string
-MONGODB_SERVER = "your_mongodb_connection_string_here"
 
-# Initialize a new Flask web application
+MONGODB_SERVER = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+DATABASE_NAME = os.environ.get("MONGODB_DATABASE", "HospitalResourcePortal")
+CLIENT_ORIGIN = os.environ.get("CLIENT_ORIGIN", "*")
+
+VALID_ROLES = {"Doctor", "Nurse", "Inventory Manager"}
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
 app = Flask(__name__)
 
-# Route for user login
-@app.route('/login', methods=['POST'])
-def login():
-    # Extract data from request
 
-    # Connect to MongoDB
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = CLIENT_ORIGIN
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
-    # Attempt to log in the user using the usersDB module
 
-    # Close the MongoDB connection
+@app.route("/api/register", methods=["OPTIONS"])
+def register_options():
+    return ("", 204)
 
-    # Return a JSON response
-    return jsonify({})
 
-# Route for the main page (Work in progress)
-@app.route('/main')
-def mainPage():
-    # Extract data from request
+def get_mongo_client():
+    return MongoClient(MONGODB_SERVER, serverSelectionTimeoutMS=5000)
 
-    # Connect to MongoDB
 
-    # Fetch user projects using the usersDB module
+def validate_registration_payload(payload):
+    required_fields = [
+        "firstName",
+        "lastName",
+        "email",
+        "password",
+        "confirmPassword",
+        "role",
+    ]
+    missing = [field for field in required_fields if not str(payload.get(field, "")).strip()]
+    if missing:
+        return f"Missing required field(s): {', '.join(missing)}"
 
-    # Close the MongoDB connection
+    email = payload["email"].strip().lower()
+    if not EMAIL_RE.match(email):
+        return "Please enter a valid email address."
 
-    # Return a JSON response
-    return jsonify({})
+    if payload["role"] not in VALID_ROLES:
+        return "Role must be Doctor, Nurse, or Inventory Manager."
 
-# Route for joining a project
-@app.route('/join_project', methods=['POST'])
-def join_project():
-    # Extract data from request
+    if payload["password"] != payload["confirmPassword"]:
+        return "Password and confirm password must match."
 
-    # Connect to MongoDB
+    password = payload["password"]
+    if len(password) < 8:
+        return "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return "Password must include at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must include at least one lowercase letter."
+    if not re.search(r"\d", password):
+        return "Password must include at least one number."
 
-    # Attempt to join the project using the usersDB module
+    return None
 
-    # Close the MongoDB connection
 
-    # Return a JSON response
-    return jsonify({})
+@app.route("/api/register", methods=["POST"])
+def register_user():
+    payload = request.get_json(silent=True) or {}
+    validation_error = validate_registration_payload(payload)
+    if validation_error:
+        return jsonify({"success": False, "message": validation_error}), 400
 
-# Route for adding a new user
-@app.route('/add_user', methods=['POST'])
+    client = get_mongo_client()
+    try:
+        user = usersDatabase.addUser(
+            client=client,
+            database_name=DATABASE_NAME,
+            first_name=payload["firstName"].strip(),
+            last_name=payload["lastName"].strip(),
+            email=payload["email"].strip().lower(),
+            password=payload["password"],
+            role=payload["role"],
+        )
+    except usersDatabase.DuplicateEmailError:
+        return jsonify({"success": False, "message": "An account with this email already exists."}), 409
+    except ServerSelectionTimeoutError:
+        return jsonify({"success": False, "message": "Database connection is unavailable."}), 503
+    except PyMongoError:
+        return jsonify({"success": False, "message": "Unable to create account right now."}), 500
+    finally:
+        client.close()
+
+    return (
+        jsonify(
+            {
+                "success": True,
+                "message": "Account created successfully.",
+                "user": user,
+            }
+        ),
+        201,
+    )
+
+
+@app.route("/add_user", methods=["POST", "OPTIONS"])
 def add_user():
-    # Extract data from request
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return register_user()
 
-    # Connect to MongoDB
 
-    # Attempt to add the user using the usersDB module
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
 
-    # Close the MongoDB connection
 
-    # Return a JSON response
-    return jsonify({})
-
-# Route for getting the list of user projects
-@app.route('/get_user_projects_list', methods=['POST'])
-def get_user_projects_list():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Fetch the user's projects using the usersDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for creating a new project
-@app.route('/create_project', methods=['POST'])
-def create_project():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Attempt to create the project using the projectsDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for getting project information
-@app.route('/get_project_info', methods=['POST'])
-def get_project_info():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Fetch project information using the projectsDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for getting all hardware names
-@app.route('/get_all_hw_names', methods=['POST'])
-def get_all_hw_names():
-    # Connect to MongoDB
-
-    # Fetch all hardware names using the hardwareDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for getting hardware information
-@app.route('/get_hw_info', methods=['POST'])
-def get_hw_info():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Fetch hardware set information using the hardwareDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for checking out hardware
-@app.route('/check_out', methods=['POST'])
-def check_out():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Attempt to check out the hardware using the projectsDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for checking in hardware
-@app.route('/check_in', methods=['POST'])
-def check_in():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Attempt to check in the hardware using the projectsDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for creating a new hardware set
-@app.route('/create_hardware_set', methods=['POST'])
-def create_hardware_set():
-    # Extract data from request
-
-    # Connect to MongoDB
-
-    # Attempt to create the hardware set using the hardwareDB module
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Route for checking the inventory of projects
-@app.route('/api/inventory', methods=['GET'])
-def check_inventory():
-    # Connect to MongoDB
-
-    # Fetch all projects from the HardwareCheckout.Projects collection
-
-    # Close the MongoDB connection
-
-    # Return a JSON response
-    return jsonify({})
-
-# Main entry point for the application
-if __name__ == '__main__':
-    app.run()
-
+if __name__ == "__main__":
+    app.run(debug=True)

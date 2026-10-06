@@ -1,40 +1,47 @@
-# Import necessary libraries and modules
-from pymongo import MongoClient
+from datetime import datetime, timezone
 
-import projectsDB
+from pymongo import ASCENDING
+from pymongo.errors import DuplicateKeyError
+from werkzeug.security import generate_password_hash
 
-'''
-Structure of User entry:
-User = {
-    'username': username,
-    'userId': userId,
-    'password': password,
-    'projects': [project1_ID, project2_ID, ...]
-}
-'''
 
-# Function to add a new user
-def addUser(client, username, userId, password):
-    # Add a new user to the database
+class DuplicateEmailError(Exception):
     pass
 
-# Helper function to query a user by username and userId
-def __queryUser(client, username, userId):
-    # Query and return a user from the database
-    pass
 
-# Function to log in a user
-def login(client, username, userId, password):
-    # Authenticate a user and return login status
-    pass
+def _users_collection(client, database_name):
+    collection = client[database_name]["users"]
+    collection.create_index([("email", ASCENDING)], unique=True)
+    return collection
 
-# Function to add a user to a project
-def joinProject(client, userId, projectId):
-    # Add a user to a specified project
-    pass
 
-# Function to get the list of projects for a user
-def getUserProjectsList(client, userId):
-    # Get and return the list of projects a user is part of
-    pass
+def addUser(client, database_name, first_name, last_name, email, password, role):
+    users = _users_collection(client, database_name)
+    normalized_email = email.strip().lower()
 
+    if users.find_one({"email": normalized_email}, {"_id": 1}):
+        raise DuplicateEmailError()
+
+    now = datetime.now(timezone.utc)
+    user_document = {
+        "firstName": first_name.strip(),
+        "lastName": last_name.strip(),
+        "email": normalized_email,
+        "passwordHash": generate_password_hash(password),
+        "role": role,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    try:
+        result = users.insert_one(user_document)
+    except DuplicateKeyError as exc:
+        raise DuplicateEmailError() from exc
+
+    return {
+        "id": str(result.inserted_id),
+        "firstName": user_document["firstName"],
+        "lastName": user_document["lastName"],
+        "email": user_document["email"],
+        "role": user_document["role"],
+    }

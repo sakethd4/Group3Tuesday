@@ -81,3 +81,30 @@ This file contains functions for managing users in the database.
 ## Client side
 
 1. Design choices are up to you, but an example directory structure has been provided. 
+
+## SCRUM-8 Registration Slice
+
+The staff registration page is implemented with React and TypeScript in `client/`.
+The form posts to the Flask endpoint `POST /api/register`.
+
+### Run the backend
+
+```bash
+cd server
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export MONGODB_URI="mongodb://localhost:27017"
+export MONGODB_DATABASE="HospitalResourcePortal"
+flask --app app run
+```
+
+### Run the frontend
+
+```bash
+cd client
+npm install
+npm run dev
+```
+
+Set `VITE_API_BASE_URL` if the Flask backend is not running at `http://localhost:5000`.
