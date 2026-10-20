@@ -1,47 +1,43 @@
+"""User persistence for the hardware library."""
 from datetime import datetime, timezone
 
-from pymongo import ASCENDING
 from pymongo.errors import DuplicateKeyError
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 class DuplicateEmailError(Exception):
     pass
 
 
-def _users_collection(client, database_name):
-    collection = client[database_name]["users"]
-    collection.create_index([("email", ASCENDING)], unique=True)
-    return collection
+def public_user(user):
+    return {
+        "id": str(user["_id"]),
+        "firstName": user["firstName"],
+        "lastName": user["lastName"],
+        "email": user["email"],
+        "role": user["role"],
+    }
 
 
-def addUser(client, database_name, first_name, last_name, email, password, role):
-    users = _users_collection(client, database_name)
-    normalized_email = email.strip().lower()
-
-    if users.find_one({"email": normalized_email}, {"_id": 1}):
-        raise DuplicateEmailError()
-
+def addUser(db, first_name, last_name, email, password, role="user"):
     now = datetime.now(timezone.utc)
-    user_document = {
+    user = {
         "firstName": first_name.strip(),
         "lastName": last_name.strip(),
-        "email": normalized_email,
+        "email": email.strip().lower(),
         "passwordHash": generate_password_hash(password),
         "role": role,
         "createdAt": now,
-        "updatedAt": now,
     }
-
     try:
-        result = users.insert_one(user_document)
+        db.users.insert_one(user)
     except DuplicateKeyError as exc:
         raise DuplicateEmailError() from exc
+    return user
 
-    return {
-        "id": str(result.inserted_id),
-        "firstName": user_document["firstName"],
-        "lastName": user_document["lastName"],
-        "email": user_document["email"],
-        "role": user_document["role"],
-    }
+
+def login(db, email, password):
+    user = db.users.find_one({"email": email.strip().lower()})
+    if user and check_password_hash(user["passwordHash"], password):
+        return user
+    return None

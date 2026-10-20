@@ -1,8 +1,83 @@
-__pycache__/
-*.py[cod]
+# Local dependencies and Python environments
+node_modules/
 .venv/
 venv/
-node_modules/
+env/
+ENV/
+__pypackages__/
+.pnpm-store/
+.npm/
+.yarn/cache/
+
+# Python bytecode and packaging output
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Build, tool, and test caches
+.cache/
+.vite/
+.vite-temp/
+.vitest/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+*.tsbuildinfo
+
+# Generated builds, coverage, and test reports
 dist/
+build/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+test-results/
+playwright-report/
+
+# Local environment settings and secrets; keep shareable examples
 .env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+.aws/
+
+# Runtime logs, process files, and local database directories
+*.log
+logs/
+*.pid
+*.pid.lock
+instance/
+.mongodb/
+.mongo-data/
+mongodb-data/
+data/db/
+
+# Local hosting state; deployment source configuration stays tracked
+.vercel/
+.elasticbeanstalk/
+
+# Machine-specific editor settings and temporary files
+.vscode/
+.idea/
+.history/
+*.iml
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
 .DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Keep dependency manifests, lockfiles, source, and version requirements tracked.
+# In particular: package-lock.json, requirements*.txt, and .python-version.

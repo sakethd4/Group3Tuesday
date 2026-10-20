@@ -1,230 +1,144 @@
-ARCHITECTURE
-Hospital Equipment Resource Portal
+# Hardware as a Service Portal
 
-USERS
-│
-├── Doctors and nurses
-│   └── Request, reserve, return
-│       └──> React.js + TypeScript
-│
-└── Inventory managers
-    └── Add, repair, retire equipment
-        └──> React.js + TypeScript
+## Purpose and scope
 
+Organizations share a limited collection of physical hardware. This portal lets users create an account, sign in, view hardware and its availability, check out an available resource, view their own checkouts, and return hardware. Each resource belongs to at most one borrower at a time. Administrators can inspect all resources and current borrowers and add, update, or remove hardware.
 
-WEB APPLICATION
-React.js + TypeScript
-- Login
-- Dashboard
-- Equipment pages
-- Request forms
+The initial sample catalog contains Hardware 1 through Hardware 6. The only resource states are **Available** and **Checked Out**. The previous hospital, patient, project, quantity, reservation, and maintenance workflows are outside this project's scope.
 
-    ↕
-    ├──────────────↔ JWT Authentication
-    │                 - Role-based access
-    │
-    └──────────────↔ Inventory Logic
-                      - Availability checks
-                      - Reservations
-                      - Check-in
+## Team and cadence
 
+Saketh Devarkaonda, Tomi Alaofin, Aalim Momin, Yasir Hassan, and Sujan Goruganti.
 
-BACKEND: Flask (Python)
+One-week sprints with an event-based cadence, Zoom standups, and a Jira board. Collaboration uses Google Drive, GitHub, Zoom, Figma, Messages, and lab sections. Work is developed on GitHub feature branches and reviewed through pull requests. Sprint demonstrations review acceptance criteria; feedback and bugs go into Jira.
 
-JWT Authentication
-    ↕
-    └──────────────↔ Users and Roles [MongoDB]
+## Architecture
 
-Inventory Logic
-    ↕
-    ├──────────────↔ Equipment and Quantities [MongoDB]
-    ├──────────────↔ Reservations and Assignments [MongoDB]
-    └──────────────↔ Status Changes [MongoDB]
+```text
+React.js / TypeScript components
+        |
+        | JSON over HTTPS, Authorization: Bearer <JWT>
+        v
+Python / Flask API
+        |
+        | PyMongo; atomic single-document writes
+        v
+MongoDB: users, hardware
+```
 
+Frontend builds with the template's Vite toolchain. Password hashing uses Werkzeug, included with Flask. JWT signing and validation use PyJWT. Tests use React Testing Library (Vitest/jsdom runner) and PyTest. Hosting targets are Vercel and/or AWS. No additional application framework or database is required.
 
-DATABASE
-MongoDB
-- Users and roles
-- Equipment and quantities
-- Reservations and assignments
-- Status changes
+## MongoDB model
 
+### `users`
 
-HOSTING
-Vercel or AWS (to be decided)
+| Property | Type | Rule |
+| --- | --- | --- |
+| `_id` | ObjectId | Generated user identity. |
+| `firstName`, `lastName` | String | Required, trimmed, 1–80 characters each. |
+| `email` | String | Required, normalized to lowercase, valid format, maximum 254 characters; unique index. |
+| `passwordHash` | String | Werkzeug scrypt password hash; never returned by the API. |
+| `role` | String | `user` or `admin`; registration only allows `user`. |
+| `createdAt` | UTC datetime | Set when the account is created. |
 
+Administrators are provisioned with the server-only `create-admin` command. Existing email addresses are rejected; the command does not silently promote users.
 
+### `hardware`
 
-SWE Lab Checkpoint 1
-Introduction
+| Property | Type | Rule |
+| --- | --- | --- |
+| `_id` | ObjectId | Immutable API resource identity, exposed as `id`. |
+| `hardwareId` | String | Unique human-readable ID, 1–64 characters, normalized uppercase; letters, numbers, hyphens, underscores; starts with a letter or number. |
+| `name` | String | Required, trimmed, 1–120 characters. |
+| `description` | String | Required, trimmed, 1–2000 characters. |
+| `status` | String | `available` or `checked_out`. |
+| `checkedOutBy` | ObjectId or null | Current user's `_id`, or null when available; indexed for personal checkouts. |
+| `createdAt` | UTC datetime | Set on creation. |
 
-Hospitals rely on a limited supply of medical equipment to provide safe and effective patient care. Before admitting a patient, hospital staff must be able to determine whether the equipment required for that patient’s treatment is currently available. This process can be time consuming. Our project is a hospital resource management portal designed to make this process faster and more reliable.
+Every entry represents one resource. A unique index prevents duplicate hardware IDs. Hardware starts available, without a borrower. Ordinary metadata edits cannot change `status` or `checkedOutBy`.
 
-Our project is a Proof of Concept Hardware as a Service (HaaS) web application, inspired by the University of Utah POWDER program.  The system will track different types of medical equipment, the quantity of each resource owned by the hospital, its current location, and whether it is available or already assigned to another patient or room. When a new patient arrives, hospital staff can enter the equipment required for that patient’s care, and the system will determine whether the hospital currently has the necessary resources available.
- If all required equipment is available, the patient can be admitted and those resources can be assigned to the patient. If one or more required resources are unavailable, the system will alert staff that the hospital will not be able to safely accommodate the patient at that time.
-By providing a centralized, real-time view of hospital equipment availability, this portal aims to prevent equipment from being overallocated and help hospital staff make faster, more informed decisions about whether the hospital has the resources necessary to care for incoming patients.
+Checkout is one `find_one_and_update` filtered by `_id`, `status: available`, and `checkedOutBy: null`. It sets the borrower and status together. Return is one conditional update filtered by `_id`, `status: checked_out`, and the authenticated borrower's identity. Deletion filters on availability so that checkout cannot race a removal and lose an active assignment. These operations use [MongoDB's single-document atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/).
 
+## Authentication and permissions
 
- Team Members
-Saketh Devarkaonda
-Tomi Alaofin
-Aalim Momin
-Yasir Hassan
-Sujan Goruganti
-Sprint Cadence
-Event-based cadence
-Standups via Zoom
-1-week sprints
-JIRA board
-Collaboration tools
-Google Drive
-Github 
-Zoom 
-Figma
-Messages
-Implementation Methodology
-We will use one-week sprints to build and review small, working parts of the hospital equipment portal. 
-Phase 1: turn the doctors', nurses', and inventory manager's needs into user stories on the Jira board. Each story will have acceptance criteria that describe the expected behavior, API response, and inventory change. 
-Model the data and permissions. Define MongoDB records for users and roles, equipment types, quantities, reservations, assignments, and status changes. Agree on which roles can request equipment, change inventory, and return units to service. Document Flask API endpoints and their request and response formats before implementing the corresponding React pages.
-Implement the admission workflow. Build a React/TypeScript form where clinical staff enter the types and quantities of equipment a patient needs. The Flask backend will compare every requested quantity with available inventory and return either a complete availability result or a list of shortages. A reservation or checkout will recheck availability when it is saved and update the related records together, avoiding allocating the same unit twice.
-Implement inventory and return workflows. Give authorized staff views to search and filter equipment, inspect its status and location, and check assigned equipment back in. Inventory managers will be able to add equipment, mark damaged units unavailable, record maintenance updates, and return repaired units to service. Each change will update the dashboard counts and record who made the change and when.
-Integrate and verify each increment. Develop each story on a GitHub feature branch and merge it through a reviewed pull request. Use PyTest for API tests covering availability, insufficient inventory, concurrent checkout, role restrictions, and check-in. Use React Testing Library for forms, status displays, and shortage messages. Review each completed story against its Jira acceptance criteria during the sprint demonstration.
-Demonstrate the proof of concept. At the end of Phase 2, deploy the integrated portal to the selected hosting environment and demonstrate a patient equipment request, successful reservation and return, and a request rejected because equipment is unavailable. Record bugs and feedback in Jira and use the sprint retrospective to prioritize fixes.
+Public routes are registration, login, and the database health check. Other routes require a valid HS256 JWT with issuer, audience, issued-at, expiry, and user subject claims. Tokens last one hour. The server secret is required and must be at least 32 bytes. The user and current role are loaded from MongoDB on every authenticated request. Missing/deleted accounts and invalid tokens return `401`; missing administrator permission returns `403`.
 
-Toolchain
-Frontend:  React.js/TypeScript
-Backend: Python with Flask
-Database: MongoDB
-Security: JWT
-Testing: React Testing Library/PyTest
-Version Control: GitHub repo
-Collaboration: Zoom, Messages, Lab Section, Standups, Github PRs
-Deployment: Vercel, AWS, Unknown?
+Users can browse every resource, but can return only their own checkouts. Administrator permission permits hardware management and borrower visibility, while checkout and return still follow the same ownership rules. Only administrators receive current borrowers' names and emails. Every API response disables caching. Cross-origin requests are allowed only for configured frontend origins.
 
-Features: 
+## API contract
 
+All request and response bodies use JSON except successful deletion (`204`, empty body). Errors have the form `{"success": false, "message": "Explanation"}`. Common status codes: `400` invalid input, `401` missing/invalid authentication, `403` permission denied, `404` unknown resource, `409` conflicting checkout/ID/email or removal of checked-out hardware, `503` unavailable database.
 
-Login Portal
-Allows authorized hospital staff to securely log into the system using provided credentials.
-Role-Based Access
-Provides different system privileges based on user role. Clinical staff can request and return equipment, while inventory managers can modify inventory and equipment status.
-Dashboard
-Displays a high-level overview of equipment availability, equipment currently in use, equipment under maintenance, alerts, and links to major system pages.
-Equipment Search
-Allows users to quickly search for equipment by name, ID, category, or location.
-Equipment Filtering
-Allows users to filter equipment based on availability, equipment type, condition, location, or maintenance status.
-Equipment Sorting
-Allows equipment to be sorted by name, quantity available, status, location, or most recent update.
-Equipment Information Page
-Displays detailed information for each equipment type or unit, including equipment ID, status, location, condition, availability, and current assignment.
-Patient Resource Requirement Form
-Allows clinical staff to enter the types and quantities of medical equipment required for an incoming patient.
-Patient Admission Resource Check
-Compares a patient's equipment requirements against current hospital inventory to determine whether the required resources are available.
-Missing Resource Warning
-Identifies which required equipment is unavailable when the hospital cannot currently support all of a patient's resource needs.
-Equipment Reservation
-Allows clinical staff to reserve available equipment for a patient so it cannot be assigned elsewhere.
-Patient Equipment Assignment
-Associates checked-out medical equipment with a specific patient.
-Room Equipment Assignment
-Associates medical equipment with a specific hospital room or department for easier tracking.
-Check-Out Equipment
-Allows clinical staff to request and check out available equipment for patient care.
-Check-In Equipment
-Allows staff to return equipment when it is no longer needed so that it becomes available again.
-Quantity Selection
-Allows users to specify how many units of a particular type of equipment are required.
-Availability Validation
-Prevents users from requesting or checking out more equipment than is currently available.
-Automatic Inventory Updates
-Automatically updates equipment availability after checkout, check-in, maintenance changes, inventory additions, or equipment removal.
-Active Equipment View
-Allows users to view equipment currently assigned to patients, rooms, or departments.
-Equipment History
-Displays previous checkouts, returns, assignments, status changes, users, and timestamps for equipment.
-Patient Resource History
-Allows hospital staff to view the equipment assigned to a patient during their hospital stay.
-Equipment Status Reporting
-Allows staff to report equipment as damaged, malfunctioning, missing, or requiring maintenance.
-Equipment Status Tracking
-Tracks equipment states such as available, reserved, in use, damaged, and under maintenance.
-Maintenance Notes
-Allows inventory managers to document equipment problems, repairs, inspections, or reasons equipment was removed from service.
-Return to Service
-Allows an inventory manager to mark repaired or inspected equipment as operational and return it to available inventory.
-Add New Equipment
-Allows inventory managers to add newly purchased or acquired equipment to hospital inventory.
-Update Equipment Inventory
-Allows inventory managers to update equipment quantities and other equipment information when inventory changes.
-Retire Equipment
-Allows outdated, permanently damaged, or removed equipment to be retired from active inventory.
-Equipment Location Tracking
-Displays the most recently recorded room, department, patient, or storage location associated with equipment.
-Equipment Transfer
-Allows equipment to be transferred between patients, rooms, or departments while maintaining an updated tracking history.
-Reminder System
-Generates notifications when equipment has been checked out for an extended period, requires maintenance, or experiences an important status change.
-Overdue Equipment Alert
-Alerts staff when equipment remains checked out beyond an expected return period.
-Low Inventory Alert
-Alerts staff when the number of available units for an equipment type falls below a specified threshold.
-Maintenance Alert
-Notifies inventory managers when equipment is due for maintenance, inspection, or calibration.
-Critical Equipment Designation
-Allows important resources, such as ventilators or patient monitors, to be designated as critical and highlighted throughout the system.
-Patient Priority Level
-Allows clinical staff to classify equipment requests by priority, such as routine, urgent, or critical.
-Hospital Capacity Indicator
-Provides a high-level view of whether critical equipment resources are sufficient to support additional patients.
-Equipment Utilization Statistics
-Displays information about how frequently different equipment types are used and their overall availability.
-Availability Percentage
-Shows equipment availability using values such as '8 of 10 available' or '80% available.'
-Request Confirmation
-Displays confirmation after equipment is successfully reserved, checked out, returned, or transferred.
-Cancel Reservation
-Allows clinical staff to cancel equipment reservations when a patient no longer requires the resource.
-Conflict Prevention
-Prevents an individual piece of equipment from being simultaneously assigned to multiple patients or locations.
-Audit Log
-Records important system actions, including equipment checkout, return, status changes, inventory updates, and the user responsible for each action.
-Recent Activity Feed
-Displays recently added, checked-out, returned, damaged, repaired, or transferred equipment on the dashboard.
+| Method | Path | Permission | Request | Success |
+| --- | --- | --- | --- | --- |
+| POST | `/api/register` | Public | `firstName`, `lastName`, `email`, `password`, `confirmPassword` | `201 {success, token, user}` |
+| POST | `/api/login` | Public | `email`, `password` | `200 {success, token, user}` |
+| GET | `/api/me` | User | None | `200 {user}` |
+| GET | `/api/hardware` | User | Optional `?mine=true` | `200 {hardware: [...]}` |
+| GET | `/api/hardware/:id` | User | None | `200 {hardware}` |
+| POST | `/api/hardware/:id/checkout` | User | None | `200 {hardware, message}` |
+| POST | `/api/hardware/:id/return` | Borrower | None | `200 {hardware, message}` |
+| POST | `/api/hardware` | Admin | `hardwareId`, `name`, `description` | `201 {hardware, message}` |
+| PUT | `/api/hardware/:id` | Admin | All three metadata fields | `200 {hardware, message}` |
+| DELETE | `/api/hardware/:id` | Admin | None; resource must be available | `204` |
+| GET | `/api/health` | Public | None | `200 {status: "ok"}` if MongoDB is reachable |
 
+`:id` is the MongoDB identity exposed by the API, not the editable `hardwareId` label. The registration password must have 8–128 characters, uppercase, lowercase, and a number. Login errors do not distinguish incorrect passwords from nonexistent accounts. Hardware writes reject unrecognized fields, including caller-supplied availability or ownership.
 
+Public user shape:
 
-User Stories:
-Doctors & Nurses will be focused on admitting patients. They will be in charge of entering the required 
-medical equipment the patient needs, and the system will determine if the necessary resources are available. If they are available, the hospital will be able to reserve those resources and admit the patient.
+```json
+{
+  "id": "MongoDB ObjectId as a string",
+  "firstName": "Alex",
+  "lastName": "User",
+  "email": "alex@example.com",
+  "role": "user"
+}
+```
 
-Doctors & Nurses:
-As a user, I want to create a secure account given that I am a new doctor or nurse.
-As a user, I want to be able to sign in with my credentials.
-As a user, I want to have a way to reset my login credentials.
-As a user, I want to be able to access the resource inventory.
-As a user, I want to be able to find the availability of an individual resource.
-As a user, I want to be able to put in a request for new equipment from the inventory manager.
-As a user, I want to be able to determine the priority for new equipment upon a request.
-As a user, I want to be able to put in a broken equipment work order.
+Hardware shape:
 
-Inventory Manager:
-As a user, I want to create a secure account given that I am a new inventory manager.
-As a user, I can login securely to the inventory management system with my credentials.
-As a user, I want to be able to reset my login credentials
-As a user,  I can remove broken or unused equipment from the system. 
-As a user, I can add newly purchased equipment to the system.
-As a user, I can update equipment quantities
-As a user, I can mark equipment as unavailable due to maintenance or failure
-As a user, I can return repaired equipment to service. 
+```json
+{
+  "id": "MongoDB ObjectId as a string",
+  "hardwareId": "HW-001",
+  "name": "Hardware 1",
+  "description": "Shared hardware resource 1.",
+  "status": "available",
+  "isCheckedOutByMe": false
+}
+```
 
-Initial work items
-Create GitHub repo and add Dr. Samant and the TAs
-Define user and equipment properties
-Design database API
+For administrators, the hardware object additionally includes `checkedOutBy`, which is null when available or the public user object for the current borrower. Regular users receive only `isCheckedOutByMe`, not another borrower's identifying information.
 
-Research Items
-Most common Hospital Equipment used across hospitals in the US
-Gripes clinics have with current tracking systems across the US
-Equipment needed for most common diseases so we can understand which equipment has highest priority and is most commonly requested
+## React components and behavior
+
+- `App`: session restoration, expiry handling, sign out, and navigation.
+- `RegistrationPage` and `LoginPage`: accessible forms, validation, submission state, server error messages.
+- `HardwarePage`: catalog, personal checkouts, administrator view, mutation feedback.
+- `HardwareCard`: hardware details, availability badge, checkout or return button, and administrator edit/remove actions.
+- `HardwareForm`: add/edit metadata with validation and retained input after errors.
+- `useHardware`: refreshes the catalog every five seconds while visible, on focus, and after mutations; cancels stale reads and preserves last-known data if the API is unavailable.
+
+The catalog disables checkout for checked-out resources. A stale browser can still receive `409`; the UI displays the conflict and reloads availability. Pending mutations disable repeated actions. Removal requires an explicit confirmation, and checked-out hardware cannot be removed until returned. Forms and cards adapt to narrow screens.
+
+## User stories and acceptance criteria
+
+| Story | Acceptance criteria |
+| --- | --- |
+| Create a secure account | Valid input creates a regular user with a hashed password and returns a JWT. Duplicate emails and invalid input are rejected. Users cannot select administrator permissions. |
+| Sign in | Correct credentials return a JWT and user; incorrect credentials return `401`. Expired and forged JWTs cannot read or mutate protected data. |
+| View all hardware and availability | Authenticated users see each resource's ID, name, description, and Available/Checked Out state. Availability refreshes automatically and errors are visible. |
+| Check out hardware | Available hardware is assigned to the authenticated user. The UI confirms success and shows it among personal checkouts. |
+| Prevent duplicate checkout | Concurrent requests for one resource have exactly one successful winner; all other requests receive `409`. |
+| View my hardware | The personal view includes only resources assigned to the current user. |
+| Return hardware | Only the current borrower can return the resource; ownership clears and status becomes Available. Another user can then check it out. |
+| Administrator sign-in and visibility | An administrator uses the same login flow and can see all resources and each current borrower's identity. |
+| Add hardware | An administrator can add a unique hardware ID with name and description. It starts Available. Regular users receive `403`. |
+| Update hardware | An administrator can edit metadata, including ID; ownership is preserved. Duplicate IDs and attempted ownership changes are rejected. |
+| Remove hardware | An administrator confirms removal of available hardware. A checked-out resource returns `409` until returned. |
+
+## Integration and demonstration
+
+PyTest verifies API behavior using a real MongoDB, including a 12-request checkout race. React Testing Library exercises the user-facing forms and actions. Each test run uses isolated database names. Build/type checks verify the TypeScript frontend. A demonstration uses two user sessions and an administrator to show checkout, conflict prevention, return/reuse, and hardware management. Setup, configuration, verification commands, and Vercel/AWS deployment instructions are in [README.md](README.md).

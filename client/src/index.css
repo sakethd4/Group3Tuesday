@@ -1,199 +1,170 @@
 :root {
-  color: #20303f;
-  background: #f5f7f8;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  font-family: Arial, sans-serif;
+  color: #000;
+  background: #fff;
+  font-size: 16px;
+  line-height: 1.5;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, textarea { font: inherit; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 12px; font-size: 28px; line-height: 1.25; }
+h2 { margin-bottom: 12px; font-size: 21px; line-height: 1.3; }
+small { font-size: 13px; }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-button,
-input,
-select {
-  font: inherit;
-}
-
-.registration-shell {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 32px 16px;
-  background:
-    linear-gradient(120deg, rgba(41, 120, 113, 0.12), transparent 36%),
-    linear-gradient(300deg, rgba(53, 82, 129, 0.14), transparent 42%),
-    #f5f7f8;
-}
-
-.registration-panel {
-  width: min(100%, 760px);
-  background: #ffffff;
-  border: 1px solid #dbe3e8;
-  border-radius: 8px;
-  box-shadow: 0 18px 48px rgba(20, 31, 43, 0.11);
-  padding: clamp(24px, 4vw, 42px);
-}
-
-.registration-heading {
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  color: #28756d;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-h1 {
-  margin: 0;
-  color: #162433;
-  font-size: clamp(2rem, 5vw, 3rem);
-  line-height: 1.05;
-  letter-spacing: 0;
-}
-
-.registration-heading p:not(.eyebrow) {
-  max-width: 620px;
-  margin: 14px 0 0;
-  color: #52606c;
-  line-height: 1.6;
-}
-
-.compact-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.page-copy {
-  margin: 0;
-  color: #52606c;
-}
-
-.registration-form {
-  display: grid;
-  gap: 18px;
-}
-
-.form-grid {
-  display: grid;
-  gap: 18px;
-}
-
-.two-column {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-label {
-  display: grid;
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
-  color: #213140;
-  font-size: 0.95rem;
-  font-weight: 700;
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid #000;
+  border-radius: 0;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
 }
 
-input,
-select {
-  min-height: 46px;
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, a:focus-visible { outline: 2px solid #000; outline-offset: 4px; }
+button:hover:not(:disabled) { text-decoration: underline; }
+.secondary, .unavailable-button { background: #fff; color: #000; }
+.text-button { min-height: 36px; padding: 4px 0; border: 0; color: #000; background: transparent; text-decoration: underline; }
+
+input, textarea {
   width: 100%;
-  border: 1px solid #b8c5ce;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #172635;
-  padding: 10px 12px;
-  outline: none;
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid #000;
+  border-radius: 0;
+  background: #fff;
+  color: #000;
 }
 
-input:focus,
-select:focus {
-  border-color: #28756d;
-  box-shadow: 0 0 0 3px rgba(40, 117, 109, 0.18);
-}
-
-input[aria-invalid="true"],
-select[aria-invalid="true"] {
-  border-color: #b42318;
-}
-
-small {
-  color: #b42318;
-  font-weight: 600;
-}
-
-.password-hint {
-  margin: -4px 0 0;
-  color: #5d6b76;
-  font-size: 0.9rem;
-}
+input:focus, textarea:focus { outline: 2px solid #000; outline-offset: 2px; }
+textarea { resize: vertical; }
+label { display: grid; gap: 6px; font-size: 14px; }
+.page-copy { max-width: 65ch; margin-bottom: 0; font-size: 14px; }
+.form-stack { display: grid; gap: 18px; }
+.two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.field-hint { margin: -8px 0 0; font-size: 12px; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 
 .message {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-radius: 6px;
-  padding: 12px 14px;
-  font-weight: 700;
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid #000;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
-.message.success {
-  border: 1px solid #88cfaa;
-  background: #ecf8f1;
-  color: #17643a;
+.message.error { border-left-width: 4px; }
+.form-stack .message { margin: 0; }
+.brand { font-size: 18px; font-weight: bold; }
+
+/* Keep the login and registration forms centered in the viewport. */
+.auth-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: 24px;
 }
 
-.message.error {
-  border: 1px solid #f0a8a1;
-  background: #fff1ef;
-  color: #9a2219;
-}
+.auth-panel { width: 100%; max-width: 420px; padding: 32px; border: 1px solid #000; }
+.auth-panel .brand { margin-bottom: 24px; text-align: center; font-size: 14px; }
+.auth-panel h2 { text-align: center; font-size: 24px; }
+.auth-panel > .page-copy { text-align: center; }
+.auth-panel .form-stack { margin-top: 24px; }
+.auth-switch { margin: 22px 0 0; text-align: center; font-size: 13px; }
+.auth-switch .text-button { font-size: inherit; }
 
-.login-link {
-  color: inherit;
-}
+.site-header { border-bottom: 1px solid #000; }
+.header-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1100px; min-height: 76px; padding: 16px 24px; margin: 0 auto; }
+.account-menu { display: flex; align-items: center; gap: 20px; }
+.avatar { display: none; }
+.account-name { max-width: 240px; font-size: 14px; overflow-wrap: anywhere; }
+.account-name small { display: block; font-size: 12px; }
+.sign-out { white-space: nowrap; }
+.portal-layout { max-width: 1100px; margin: 28px auto; padding: 0 24px; }
+.library-sidebar { margin-bottom: 32px; }
+.view-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+.view-tabs button { color: #000; background: #fff; }
+.view-tabs button[aria-current] { color: #fff; background: #000; }
+.view-tabs button span { font-weight: bold; }
+.inventory-summary { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-top: 20px; font-size: 13px; }
+.inventory-summary > div { display: flex; gap: 8px; }
+.portal-main { min-width: 0; }
+.page-heading { margin-bottom: 16px; }
+.catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 42px; margin-bottom: 14px; }
+.refresh-indicator { font-size: 12px; }
+.status-dot { display: none; }
 
-.standalone-link {
-  font-weight: 800;
-}
+.hardware-grid { border: 1px solid #000; }
+.catalog-columns, .hardware-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 0.65fr) 145px; align-items: center; gap: 20px; padding: 18px; }
+.catalog-columns { border-bottom: 1px solid #000; font-size: 13px; font-weight: bold; }
+.catalog-columns > :last-child { text-align: center; }
+.hardware-card { border-bottom: 1px solid #000; }
+.hardware-card:last-child { border-bottom: 0; }
+.resource-details, .resource-availability, .card-actions { min-width: 0; }
+.hardware-id { display: block; margin-bottom: 5px; font-size: 12px; overflow-wrap: anywhere; }
+.hardware-card h2 { margin-bottom: 6px; font-size: 18px; overflow-wrap: anywhere; }
+.hardware-description { max-width: 60ch; margin-bottom: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-badge { font-size: 14px; font-weight: bold; }
+.card-assignment { display: grid; gap: 5px; margin-top: 7px; font-size: 12px; overflow-wrap: anywhere; }
+.borrower small { display: block; margin-top: 3px; font-size: inherit; }
+.card-actions > button { width: 100%; padding-inline: 10px; }
+.management-actions { display: grid; gap: 5px; }
+.remove-confirmation { padding-top: 12px; margin-top: 8px; border-top: 1px solid #000; font-size: 13px; }
+.remove-confirmation button { width: 100%; margin-bottom: 6px; }
+.hardware-editor { margin-bottom: 24px; padding: 24px; border: 1px solid #000; }
+.editor-heading { margin-bottom: 22px; }
+.editor-heading p { margin-bottom: 0; font-size: 14px; }
+.hardware-editor .form-stack { max-width: 700px; }
+.empty-state { padding: 40px 20px; border: 1px solid #000; text-align: center; }
+.empty-state p { font-size: 14px; }
+.catalog-footer { margin-top: 16px; text-align: right; font-size: 12px; }
+.loading-shell { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; min-height: 100svh; padding: 24px; text-align: center; }
 
-button {
-  min-height: 48px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
   border: 0;
-  border-radius: 6px;
-  background: #255f8f;
-  color: #ffffff;
-  cursor: pointer;
-  font-weight: 800;
-  padding: 12px 18px;
 }
 
-button:disabled {
-  cursor: progress;
-  opacity: 0.7;
+@media (max-width: 700px) {
+  .header-inner { padding: 16px; gap: 12px; }
+  .brand { font-size: 16px; }
+  .account-name { display: none; }
+  .portal-layout { margin-top: 20px; padding-inline: 16px; }
+  .inventory-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .inventory-summary > div { justify-content: space-between; gap: 6px; }
+  h1 { font-size: 25px; }
+  .catalog-columns { display: none; }
+  .hardware-card { grid-template-columns: minmax(0, 1fr) 132px; padding: 16px; gap: 16px 12px; }
+  .resource-details { grid-column: 1 / -1; }
+  .two-column { grid-template-columns: 1fr; }
+  .hardware-editor { padding: 18px; }
+  .auth-shell { padding: 18px; }
+  .auth-panel { padding: 24px; }
+  .catalog-toolbar > button { padding-inline: 10px; }
 }
 
-@media (max-width: 680px) {
-  .two-column {
-    grid-template-columns: 1fr;
-  }
-
-  .registration-panel {
-    padding: 22px;
-  }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
 }

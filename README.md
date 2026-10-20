@@ -1,110 +1,127 @@
-# AppDevProjectTemplate
-Template for MIS385N (Advanced Programming and App Development) Team Project
-# Project Overview
+# Hardware Library
 
-This project is a web application built using Flask and MongoDB, and React. The application manages users, projects, and hardware sets, allowing users to log in, join projects, and request hardware. The backend consists of four main Python files that handle different aspects of the application's functionality.
+A Hardware as a Service portal built from the AppDevProjectTemplate. Users register, sign in, browse individual hardware resources, check out available hardware, view their checkouts, and return hardware. Administrators can add, edit, and remove resources and see each current borrower.
 
-## 1. `app.py`
+The application keeps the template's `client/` and `server/` structure. The frontend uses React/TypeScript components, the API uses Python/Flask, persistence uses MongoDB through PyMongo, and authentication uses signed JWTs through PyJWT. Vite builds the React app. React Testing Library runs with Vitest/jsdom; API tests use PyTest and a real MongoDB instance.
 
-This file is the main entry point of the application. It sets up the Flask web server and defines various routes for handling user requests.
+## Run locally
 
-- **Routes:**
-  - `/login`: Handles user login.
-  - `/main`: Handles requests to the main user portal.
-  - `/join_project`: Allows a user to join a project.
-  - `/add_user`: Adds a new user to the database.
-  - `/get_user_projects_list`: Retrieves the list of projects a user is part of.
-  - `/create_project`: Creates a new project.
-  - `/get_project_info`: Retrieves information about a project.
-  - `/get_all_hw_names`: Retrieves a list of all hardware set names.
-  - `/get_hw_info`: Retrieves information about a specific hardware set.
-  - `/check_out`: Handles hardware checkout for a project.
-  - `/check_in`: Handles hardware check-in for a project.
-  - `/create_hardware_set`: Creates a new hardware set.
-  - `/api/inventory`: Checks the inventory of projects.
+Prerequisites: Python 3.12+, Node.js 22.12+ (or a compatible newer release), npm, and a running MongoDB instance. MongoDB may run locally or at a reachable MongoDB URI. No application data is stored in browser storage or an in-memory database.
 
-## 2. `hardwareDB.py`
-
-This file contains functions for managing hardware sets in the database.
-
-- **Functions:**
-  - `createHardwareSet`: Creates a new hardware set.
-  - `queryHardwareSet`: Queries a hardware set by its name.
-  - `updateAvailability`: Updates the availability of a hardware set.
-  - `requestSpace`: Requests a certain amount of hardware from a set.
-  - `getAllHwNames`: Retrieves a list of all hardware set names.
-
-## 3. `projectsDB.py`
-
-This file contains functions for managing projects in the database.
-
-- **Functions:**
-  - `queryProject`: Queries a project by its ID.
-  - `createProject`: Creates a new project.
-  - `addUser`: Adds a user to a project.
-  - `updateUsage`: Updates the usage of a hardware set in a project.
-  - `checkOutHW`: Handles hardware checkout for a project.
-  - `checkInHW`: Handles hardware check-in for a project.
-
-## 4. `usersDB.py`
-
-This file contains functions for managing users in the database.
-
-- **Functions:**
-  - `addUser`: Adds a new user to the database.
-  - `__queryUser`: Helper function to query a user by username and userId.
-  - `login`: Authenticates a user and handles login.
-  - `joinProject`: Adds a user to a project.
-  - `getUserProjectsList`: Retrieves the list of projects a user is part of.
-
-## How the Files Interact
-
-1. **User Management (`usersDB.py`):**
-   - `addUser` function in `usersDB.py` is used to add new users to the database.
-   - `login` function in `usersDB.py` is used to authenticate users when they log in through the `/login` route in `app.py`.
-   - `joinProject` function in `usersDB.py` adds users to projects and interacts with `projectsDB.py` to update project information.
-
-2. **Project Management (`projectsDB.py`):**
-   - `createProject` function in `projectsDB.py` is called through the `/create_project` route in `app.py` to create new projects.
-   - `addUser` function in `projectsDB.py` adds users to projects, updating the project's user list.
-   - `checkOutHW` and `checkInHW` functions in `projectsDB.py` handle hardware check-out and check-in for projects, respectively, interacting with `hardwareDB.py` to update hardware availability.
-
-3. **Hardware Management (`hardwareDB.py`):**
-   - `createHardwareSet` function in `hardwareDB.py` is used to create new hardware sets through the `/create_hardware_set` route in `app.py`.
-   - `requestSpace` function in `hardwareDB.py` handles requests for hardware availability when users check out or check in hardware through the `/check_out` and `/check_in` routes in `app.py`.
-   - `getAllHwNames` and `queryHardwareSet` functions in `hardwareDB.py` provide hardware set information to various routes in `app.py`.
-
-4. **Main Application (`app.py`):**
-   - Defines routes that handle HTTP requests and interact with `usersDB.py`, `projectsDB.py`, and `hardwareDB.py` to perform various operations.
-   - Routes call appropriate functions from the respective database modules to manage users, projects, and hardware sets.
-
-## Client side
-
-1. Design choices are up to you, but an example directory structure has been provided. 
-
-## SCRUM-8 Registration Slice
-
-The staff registration page is implemented with React and TypeScript in `client/`.
-The form posts to the Flask endpoint `POST /api/register`.
-
-### Run the backend
+From the repository root, prepare the backend:
 
 ```bash
 cd server
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-export MONGODB_URI="mongodb://localhost:27017"
-export MONGODB_DATABASE="HospitalResourcePortal"
-flask --app app run
+python -m pip install -r requirements-dev.txt
+cp .env.example .env
 ```
 
-### Run the frontend
+Edit `server/.env`: set `MONGODB_URI` if needed, keep the new `HardwareLibrary` database name, and replace the empty `JWT_SECRET` with your own random value. Generate one with:
+
+```bash
+python -c 'import secrets; print(secrets.token_hex(32))'
+```
+
+Load the configuration and initialize the library:
+
+```bash
+set -a
+source .env
+set +a
+python -m flask --app app init-db --seed
+python -m flask --app app create-admin
+python -m flask --app app run --port 5001
+```
+
+`create-admin` prompts for the administrator's name, email, and password. It does not install a default password or promote existing accounts. Public registration creates regular users only. Passwords require 8–128 characters, including uppercase, lowercase, and a number. JWTs expire after one hour.
+
+`init-db --seed` adds Hardware 1 through Hardware 6 as available resources with IDs `HW-001` through `HW-006`. Running it again preserves existing descriptions and checkouts. Omit `--seed` to start with an empty catalog. MongoDB's indexes are also initialized lazily by the API.
+
+In a second terminal, from the repository root:
 
 ```bash
 cd client
-npm install
+npm ci
 npm run dev
 ```
 
-Set `VITE_API_BASE_URL` if the Flask backend is not running at `http://localhost:5000`.
+Open **http://localhost:5173**. Create a regular account, or sign in using the administrator account you created. Vite proxies `/api` to Flask at `127.0.0.1:5001`. Port 5001 avoids the port 5000 conflict with macOS Control Center. If you choose another port, change Flask's port and the proxy target in `client/vite.config.ts` together.
+
+The catalog refreshes every five seconds while visible, when the tab regains focus, and after mutations. A failed refresh preserves the last known data and displays a warning with a retry button. The database rechecks every checkout atomically, even if a browser's display is stale.
+
+## Configuration
+
+| Variable | Location | Purpose |
+| --- | --- | --- |
+| `MONGODB_URI` | Backend | MongoDB connection string; defaults to `mongodb://127.0.0.1:27017`. |
+| `MONGODB_DATABASE` | Backend | Defaults to `HardwareLibrary`; separate from the previous hospital database. |
+| `JWT_SECRET` | Backend | Required random signing secret, at least 32 bytes. Use the same value across API instances. |
+| `CLIENT_ORIGIN` | Backend | Exact allowed frontend origin, default `http://localhost:5173`; comma-separated origins are supported. |
+| `VITE_API_BASE_URL` | Frontend, at build time | Deployed API origin, e.g. `https://your-api.example.com`; no `/api` suffix. Leave empty for local development. |
+| `TEST_MONGODB_URI` | API tests | Test MongoDB server; defaults to `mongodb://127.0.0.1:27017`. |
+
+The frontend retains its JWT in `sessionStorage` for the current tab. Sign out removes it locally; issued tokens expire after one hour. The API reads the user's current role from MongoDB on each request. Borrower names and emails are visible only to administrators. Checkout and return never accept a user ID from the client.
+
+Existing hospital accounts and project records are not migrated. Use the new database and create new accounts. The obsolete project database stub has been removed.
+
+## Verify
+
+From the repository root, with MongoDB running:
+
+```bash
+server/.venv/bin/python -m pytest server/tests -q
+npm --prefix client test
+npm --prefix client run build
+```
+
+For MongoDB on a different port:
+
+```bash
+TEST_MONGODB_URI=mongodb://127.0.0.1:27018 server/.venv/bin/python -m pytest server/tests -q
+```
+
+API tests create uniquely named `haas_test_*` databases and remove only those databases afterward. They fail explicitly if MongoDB cannot be reached. The tests cover registration, password hashing, login, expired/forged JWTs, role restrictions, catalog visibility, checkout, 12 simultaneous checkout attempts, returns, borrower privacy, administrator CRUD, validation, database failure handling, and setup commands.
+
+React Testing Library exercises login/registration forms, session restoration and expiration, availability displays, checkout/return buttons, duplicate submission prevention, automatic refresh, conflict messages, retries, and administrator add/edit/remove flows. API calls are mocked in component tests; database behavior is tested separately against MongoDB.
+
+To demonstrate the complete workflow, register two users in separate browser sessions. Check out Hardware 1 as the first user. The second user's catalog will mark it unavailable on refresh, and any stale checkout attempt will receive a conflict. Return it as the first user, then check it out as the second. Sign in as the administrator to inspect the borrower and manage resources. Checked-out hardware must be returned before removal.
+
+## Deploy on Vercel / AWS
+
+Deployment configuration is included; hosting credentials, a production MongoDB URI, and environment variables must be supplied by the project owner. No live deployment is created by this repository alone.
+
+### Vercel frontend and Flask backend
+
+1. Import this repository into Vercel twice, with separate project root directories: `server` for the Flask API and `client` for the React frontend.
+2. For the API, use the Flask framework preset and Python 3.12. `server/app.py` exports `app`; `server/requirements.txt` contains its dependencies. Set `MONGODB_URI`, `MONGODB_DATABASE`, `JWT_SECRET`, and `CLIENT_ORIGIN` in the API project's environment. Ensure the database is reachable from the deployment.
+3. For the frontend, use the Vite preset, `npm run build`, and output directory `dist`. Set `VITE_API_BASE_URL` to the deployed API origin. The included `client/vercel.json` rewrites `/login` and `/register` to the React entry point.
+4. Set the backend's `CLIENT_ORIGIN` to the exact HTTPS frontend origin and redeploy the API after changing it. Configure any intended preview origins explicitly too. The API must be reachable by the frontend without a hosting-provider login challenge.
+5. Run `flask --app app init-db --seed` and `flask --app app create-admin` from a trusted environment using the production database configuration. Keep secrets out of Git and use HTTPS for both deployments.
+6. Check the deployed API's `/api/health` endpoint and perform the demonstration above against the deployed frontend.
+
+Vercel's supported Flask entry point is documented in [Flask on Vercel](https://vercel.com/docs/frameworks/backend/flask).
+
+### AWS alternative for the Flask backend
+
+The frontend can remain on Vercel while the Flask API runs on AWS Elastic Beanstalk's Python platform. Package the **contents of `server/`** as the deployment root, excluding `.venv`, `.env`, caches, and tests. `application.py` exports the WSGI `application`, and `.ebextensions/python.config` selects it. Configure the same backend environment variables, provide access to MongoDB, and use an HTTPS endpoint. Set the Vercel frontend's `VITE_API_BASE_URL` to that endpoint. The AWS platform supplies its production WSGI server; do not deploy Flask's development server as the production process. See [AWS's Flask deployment guide](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/create-deploy-python-flask.html).
+
+## Project layout
+
+```text
+client/src/
+  App.tsx                    Session and page navigation
+  api.ts                     Authenticated API requests and error handling
+  components/                Brand, auth layout, hardware card, hardware form
+  hooks/useHardware.ts       Availability refresh and request cancellation
+  pages/                     Registration, login, and hardware library
+  test/                      React Testing Library tests
+server/
+  app.py                     Flask routes, JWT validation, roles, CLI commands
+  usersDatabase.py           User persistence and password verification
+  hardwareDatabase.py        Hardware CRUD and atomic checkout/return
+  tests/                     PyTest integration tests using MongoDB
+```
+
+See [DesignDoc.md](DesignDoc.md) for the data model, API contract, and acceptance criteria.
