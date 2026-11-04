@@ -72,39 +72,42 @@ def test_expired_forged_and_incomplete_jwts(client, app, accounts, db):
         assert client.get("/api/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
-def test_checkout_conflict_return_and_reuse(client, accounts, hardware):
+def test_checkout_conflict_return_and_reuse(client, accounts, hardware, projects):
     url = f"/api/hardware/{hardware['id']}"
     assert client.get(url, headers=accounts["alice"]).json["hardware"]["status"] == "available"
-    first = client.post(f"{url}/checkout", headers=accounts["alice"])
+    first = client.post(f"{url}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"])
     assert first.status_code == 200
-    assert first.json["hardware"]["isCheckedOutByMe"] is True
+    assert first.json["hardware"]["isCheckedOutByMyProjects"] is True
     assert first.json["hardware"]["status"] == "checked_out"
+    assert first.json["hardware"]["project"]["id"] == projects["alice"]["id"]
     for name in ("alice", "bob"):
-        assert client.post(f"{url}/checkout", headers=accounts[name]).status_code == 409
+        assert client.post(f"{url}/checkout", json={"projectId": projects[name]["id"]}, headers=accounts[name]).status_code == 409
     assert client.get("/api/hardware?mine=true", headers=accounts["alice"]).json["hardware"][0]["id"] == hardware["id"]
     assert client.get("/api/hardware?mine=true", headers=accounts["bob"]).json["hardware"] == []
     assert client.post(f"{url}/return", headers=accounts["bob"]).status_code == 403
     assert client.post(f"{url}/return", headers=accounts["admin"]).status_code == 403
     returned = client.post(f"{url}/return", headers=accounts["alice"])
     assert returned.json["hardware"]["status"] == "available"
-    assert returned.json["hardware"]["isCheckedOutByMe"] is False
+    assert returned.json["hardware"]["isCheckedOutByMyProjects"] is False
     assert client.post(f"{url}/return", headers=accounts["alice"]).status_code == 409
     assert client.get("/api/hardware?mine=true", headers=accounts["alice"]).json["hardware"] == []
-    assert client.post(f"{url}/checkout", headers=accounts["bob"]).status_code == 200
+    assert client.post(f"{url}/checkout", json={"projectId": projects["bob"]["id"]}, headers=accounts["bob"]).status_code == 200
 
 
-def test_concurrent_checkout_has_exactly_one_winner(app, accounts, hardware, db):
+def test_concurrent_checkout_has_exactly_one_winner(app, accounts, hardware, db, projects):
     barrier = Barrier(12)
     def checkout(index):
         with app.test_client() as client:
             barrier.wait()
-            return client.post(f"/api/hardware/{hardware['id']}/checkout", headers=accounts["alice" if index % 2 else "bob"]).status_code
+            return client.post(f"/api/hardware/{hardware['id']}/checkout", json={"projectId": projects["alice" if index % 2 else "bob"]["id"]}, headers=accounts["alice" if index % 2 else "bob"]).status_code
     with ThreadPoolExecutor(max_workers=12) as pool:
         statuses = list(pool.map(checkout, range(12)))
     assert statuses.count(200) == 1
     assert statuses.count(409) == 11
     stored = db.hardware.find_one({"_id": ObjectId(hardware["id"])})
-    assert stored["status"] == "checked_out" and isinstance(stored["checkedOutBy"], ObjectId)
+    assert stored["status"] == "checked_out" and isinstance(stored["checkedOutTo"], ObjectId)
+    assert db.history.count_documents({"action": "checkout"}) == 1
+    assert sum(p["hardwareCount"] for p in db.projects.find({})) == 1
 
 
 def test_only_admin_can_manage_hardware(client, accounts, hardware):
@@ -124,9 +127,9 @@ def test_only_admin_can_manage_hardware(client, accounts, hardware):
     assert client.get(url, headers=accounts["admin"]).status_code == 404
 
 
-def test_admin_borrower_visibility_and_safe_metadata_edit(client, accounts, hardware):
+def test_admin_borrower_visibility_and_safe_metadata_edit(client, accounts, hardware, projects):
     url = f"/api/hardware/{hardware['id']}"
-    client.post(f"{url}/checkout", headers=accounts["alice"])
+    client.post(f"{url}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"])
     public = client.get("/api/hardware", headers=accounts["bob"]).json["hardware"][0]
     assert "checkedOutBy" not in public
     admin = client.get("/api/hardware", headers=accounts["admin"]).json["hardware"][0]
@@ -150,19 +153,19 @@ def test_permissions_are_loaded_from_database(client, accounts, hardware, db):
 
 
 @pytest.mark.parametrize("identifier", ["not-an-id", "0" * 24])
-def test_missing_hardware(client, accounts, identifier):
+def test_missing_hardware(client, accounts, identifier, projects):
     url = f"/api/hardware/{identifier}"
     assert client.get(url, headers=accounts["alice"]).status_code == 404
-    assert client.post(f"{url}/checkout", headers=accounts["alice"]).status_code == 404
+    assert client.post(f"{url}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"]).status_code == 404
     assert client.post(f"{url}/return", headers=accounts["alice"]).status_code == 404
     assert client.delete(url, headers=accounts["admin"]).status_code == 404
 
 
-def test_seed_is_repeatable_and_preserves_checkouts(app, client, accounts, db):
+def test_seed_is_repeatable_and_preserves_checkouts(app, client, accounts, db, projects):
     runner = app.test_cli_runner()
     assert runner.invoke(args=["init-db", "--seed"]).exit_code == 0
     item = db.hardware.find_one({"hardwareId": "HW-001"})
-    client.post(f"/api/hardware/{item['_id']}/checkout", headers=accounts["alice"])
+    client.post(f"/api/hardware/{item['_id']}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"])
     assert runner.invoke(args=["init-db", "--seed"]).exit_code == 0
     assert db.hardware.count_documents({}) == 6
     assert db.hardware.find_one({"_id": item["_id"]})["status"] == "checked_out"
@@ -189,11 +192,11 @@ def test_cors_and_error_responses(client):
     assert client.get("/api/health").headers["Cache-Control"] == "no-store"
 
 
-def test_database_failure_returns_503(client, accounts, hardware, monkeypatch):
+def test_database_failure_returns_503(client, accounts, hardware, monkeypatch, projects):
     def unavailable(*args):
         raise ServerSelectionTimeoutError("internal connection details")
     monkeypatch.setattr(hardwareDatabase, "checkOut", unavailable)
-    response = client.post(f"/api/hardware/{hardware['id']}/checkout", headers=accounts["alice"])
+    response = client.post(f"/api/hardware/{hardware['id']}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"])
     assert response.status_code == 503
     assert "internal connection details" not in response.json["message"]
 
@@ -213,13 +216,13 @@ def test_invalid_hardware_fields(client, accounts, fields):
     assert client.post("/api/hardware", json=fields, headers=accounts["admin"]).status_code == 400
 
 
-def test_checkout_racing_removal_never_loses_an_assignment(app, accounts, hardware, db):
+def test_checkout_racing_removal_never_loses_an_assignment(app, accounts, hardware, db, projects):
     barrier = Barrier(2)
     url = f"/api/hardware/{hardware['id']}"
     def checkout():
         with app.test_client() as client:
             barrier.wait()
-            return client.post(f"{url}/checkout", headers=accounts["alice"]).status_code
+            return client.post(f"{url}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"]).status_code
     def remove():
         with app.test_client() as client:
             barrier.wait()

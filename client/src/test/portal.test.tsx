@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -6,13 +6,14 @@ import { SESSION_KEY } from "../api";
 import HardwarePage from "../pages/HardwarePage";
 import LoginPage from "../pages/LoginPage";
 import RegistrationPage from "../pages/RegistrationPage";
-import { Hardware, Session, User } from "../types";
+import { Hardware, Project, Session, User } from "../types";
 
 const user: User = { id: "user-1", firstName: "Alex", lastName: "User", email: "alex@example.com", role: "user" };
 const session: Session = { token: "test-jwt", user };
 const admin: Session = { token: "admin-jwt", user: { ...user, id: "admin-1", role: "admin" } };
-const first: Hardware = { id: "resource-1", hardwareId: "HW-001", name: "Hardware 1", description: "Shared hardware resource 1.", status: "available", isCheckedOutByMe: false };
-const second: Hardware = { id: "resource-2", hardwareId: "HW-002", name: "Hardware 2", description: "Shared hardware resource 2.", status: "checked_out", isCheckedOutByMe: false };
+const project: Project = { id: "project-1", projectId: "PROJ-001", name: "Robotics", description: "Team project", creatorId: user.id, isCreator: true, isMember: true, memberCount: 1, hardwareCount: 0 };
+const first: Hardware = { id: "resource-1", hardwareId: "HW-001", name: "Hardware 1", description: "Shared hardware resource 1.", status: "available", isCheckedOutByMyProjects: false, canReturn: false, project: null };
+const second: Hardware = { id: "resource-2", hardwareId: "HW-002", name: "Hardware 2", description: "Shared hardware resource 2.", status: "checked_out", isCheckedOutByMyProjects: false, canReturn: false, project: null };
 const fetchMock = vi.fn<typeof fetch>();
 const reply = (data: unknown, status = 200) => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
 
@@ -80,11 +81,12 @@ describe("account forms", () => {
 
 describe("hardware workflows", () => {
   it("shows resource information and disables checkout of unavailable hardware", async () => {
-    fetchMock.mockImplementation(() => reply({ hardware: [first, second] }));
+    fetchMock.mockImplementation(() => reply({ projects: [project], hardware: [first, second] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     expect(await screen.findByRole("heading", { name: "Hardware 1" })).toBeInTheDocument();
     expect(screen.getByText("HW-001")).toBeInTheDocument();
     expect(screen.getByText(first.description)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Check out to project"), { target: { value: project.id } });
     expect(screen.getByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Unavailable: Hardware 2" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Manage hardware" })).not.toBeInTheDocument();
@@ -97,23 +99,25 @@ describe("hardware workflows", () => {
     fetchMock.mockImplementation((url, options) => {
       if (String(url).endsWith("/checkout")) {
         expect(options?.method).toBe("POST");
-        resources = [{ ...first, status: "checked_out", isCheckedOutByMe: true }, second];
-        return reply({ hardware: resources[0] });
+        expect(JSON.parse(String(options?.body))).toEqual({ projectId: project.id });
+        resources = [{ ...first, status: "checked_out", isCheckedOutByMyProjects: true, canReturn: true, project }, second];
+        return reply({ projects: [project], hardware: resources[0] });
       }
       if (String(url).endsWith("/return")) {
         resources = [first, second];
-        return reply({ hardware: first });
+        return reply({ projects: [project], hardware: first });
       }
-      return reply({ hardware: resources });
+      return reply({ projects: [project], hardware: resources });
     });
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
+    await events.selectOptions(await screen.findByLabelText("Check out to project"), project.id);
     await events.click(await screen.findByRole("button", { name: "Check out: Hardware 1" }));
-    expect(await screen.findByText("Hardware 1 is now checked out to you.")).toBeInTheDocument();
-    await events.click(screen.getByRole("button", { name: /My checkouts/ }));
+    expect(await screen.findByText("Hardware 1 is now checked out to Robotics.")).toBeInTheDocument();
+    await events.click(screen.getByRole("button", { name: /My projects’ hardware/ }));
     expect(screen.queryByRole("heading", { name: "Hardware 2" })).not.toBeInTheDocument();
     await events.click(await screen.findByRole("button", { name: "Return hardware: Hardware 1" }));
-    expect(await screen.findByText("Hardware 1 returned and available for another user.")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "You’re all checked in" })).toBeInTheDocument();
+    expect(await screen.findByText("Hardware 1 returned and available for another project.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No hardware assigned to your projects" })).toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "Browse hardware" }));
     expect(await screen.findByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
   });
@@ -126,9 +130,10 @@ describe("hardware workflows", () => {
         item = { ...first, status: "checked_out" };
         return reply({ message: "This hardware is already checked out." }, 409);
       }
-      return reply({ hardware: [item] });
+      return reply({ projects: [project], hardware: [item] });
     });
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
+    await events.selectOptions(await screen.findByLabelText("Check out to project"), project.id);
     await events.click(await screen.findByRole("button", { name: "Check out: Hardware 1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("already checked out");
     expect(await screen.findByRole("button", { name: "Unavailable: Hardware 1" })).toBeDisabled();
@@ -138,8 +143,9 @@ describe("hardware workflows", () => {
     const events = userEvent.setup();
     let finish: (value: Response) => void = () => {};
     fetchMock.mockImplementation((url) => String(url).endsWith("/checkout")
-      ? new Promise((resolve) => { finish = resolve; }) : reply({ hardware: [first] }));
+      ? new Promise((resolve) => { finish = resolve; }) : reply({ projects: [project], hardware: [first] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
+    await events.selectOptions(await screen.findByLabelText("Check out to project"), project.id);
     const button = await screen.findByRole("button", { name: "Check out: Hardware 1" });
     await events.dblClick(button);
     expect(button).toBeDisabled();
@@ -150,9 +156,10 @@ describe("hardware workflows", () => {
   it("automatically refreshes availability every five seconds", async () => {
     vi.useFakeTimers();
     let item = first;
-    fetchMock.mockImplementation(() => reply({ hardware: [item] }));
+    fetchMock.mockImplementation(() => reply({ projects: [project], hardware: [item] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.change(screen.getByLabelText("Check out to project"), { target: { value: project.id } });
     expect(screen.getByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
     item = { ...first, status: "checked_out" };
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
@@ -162,10 +169,10 @@ describe("hardware workflows", () => {
   it("allows a slow availability request to finish instead of aborting it on every poll", async () => {
     vi.useFakeTimers();
     let finish: (value: Response) => void = () => {};
-    fetchMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    fetchMock.mockImplementation((url) => String(url).endsWith("/projects") ? reply({ projects: [project] }) : new Promise((resolve) => { finish = resolve; }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false);
     await act(async () => finish(new Response(JSON.stringify({ hardware: [first] }), { status: 200 })));
     expect(screen.getByRole("heading", { name: "Hardware 1" })).toBeInTheDocument();
@@ -174,7 +181,7 @@ describe("hardware workflows", () => {
   it("reports availability failures and retries", async () => {
     const events = userEvent.setup();
     fetchMock.mockImplementationOnce(() => reply({ message: "Database is unavailable." }, 503))
-      .mockImplementation(() => reply({ hardware: [first] }));
+      .mockImplementation(() => reply({ projects: [project], hardware: [first] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Database is unavailable.");
     await events.click(screen.getByRole("button", { name: "Retry" }));
@@ -189,22 +196,22 @@ describe("hardware workflows", () => {
       if (options?.method === "POST") {
         const fields = JSON.parse(String(options.body));
         resources = [...resources, { ...first, ...fields }];
-        return reply({ hardware: resources[1] }, 201);
+        return reply({ projects: [project], hardware: resources[1] }, 201);
       }
       if (options?.method === "PUT") {
         const fields = JSON.parse(String(options.body));
         resources = [resources[0], { ...resources[1], ...fields }];
-        return reply({ hardware: resources[1] });
+        return reply({ projects: [project], hardware: resources[1] });
       }
       if (options?.method === "DELETE") {
         expect(String(url)).toBe("/api/hardware/resource-1");
         resources = [resources[0]];
         return reply(null, 204);
       }
-      return reply({ hardware: resources });
+      return reply({ projects: [project], hardware: resources });
     });
     render(<HardwarePage session={admin} onSignOut={vi.fn()} />);
-    expect(await screen.findByText("Borrower: Alex User")).toBeInTheDocument();
+    expect(await screen.findByText("Checked out by: Alex User")).toBeInTheDocument();
     expect(screen.getByText(user.email)).toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "Manage hardware" }));
     expect(screen.getByRole("button", { name: "Remove Hardware 2" })).toBeDisabled();
@@ -229,7 +236,7 @@ describe("hardware workflows", () => {
     const events = userEvent.setup();
     fetchMock.mockImplementation((_url, options) => options?.method === "POST"
       ? reply({ message: "A resource with this hardware ID already exists." }, 409)
-      : reply({ hardware: [] }));
+      : reply({ projects: [project], hardware: [] }));
     render(<HardwarePage session={admin} onSignOut={vi.fn()} />);
     await screen.findByText("No hardware yet");
     await events.click(screen.getByRole("button", { name: "Manage hardware" }));
@@ -246,7 +253,7 @@ describe("hardware workflows", () => {
 describe("session lifecycle", () => {
   it("signs in, retains the JWT for this tab, and signs out", async () => {
     const events = userEvent.setup();
-    fetchMock.mockImplementation((url) => String(url).endsWith("/login") ? reply(session) : reply({ hardware: [] }));
+    fetchMock.mockImplementation((url) => String(url).endsWith("/login") ? reply(session) : reply({ projects: [project], hardware: [] }));
     render(<App />);
     await events.type(screen.getByLabelText("Email"), user.email);
     await events.type(screen.getByLabelText("Password"), "LibraryPass123");
@@ -271,7 +278,7 @@ describe("session lifecycle", () => {
     const events = userEvent.setup();
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
     fetchMock.mockRejectedValueOnce(new TypeError("Offline"))
-      .mockImplementation((url) => String(url).endsWith("/me") ? reply({ user }) : reply({ hardware: [] }));
+      .mockImplementation((url) => String(url).endsWith("/me") ? reply({ user }) : reply({ projects: [project], hardware: [] }));
     render(<App />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not reach the server");
     expect(sessionStorage.getItem(SESSION_KEY)).not.toBeNull();

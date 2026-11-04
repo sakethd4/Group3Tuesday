@@ -8,33 +8,36 @@ def createHardware(db, fields):
     hardware = {
         **fields,
         "status": "available",
+        "checkedOutTo": None,
         "checkedOutBy": None,
+        "checkedOutAt": None,
         "createdAt": datetime.now(timezone.utc),
     }
     db.hardware.insert_one(hardware)
     return hardware
 
 
-def checkOut(db, hardware_id, user_id):
+def checkOut(db, hardware_id, project_id, user_id, session):
     # The predicate and update are one atomic MongoDB operation. Only one
     # contender can change an available resource to checked_out.
     return db.hardware.find_one_and_update(
-        {"_id": hardware_id, "status": "available", "checkedOutBy": None},
-        {"$set": {"status": "checked_out", "checkedOutBy": user_id}},
-        return_document=ReturnDocument.AFTER,
+        {"_id": hardware_id, "status": "available", "checkedOutTo": None},
+        {"$set": {"status": "checked_out", "checkedOutTo": project_id, "checkedOutBy": user_id,
+                  "checkedOutAt": datetime.now(timezone.utc)}},
+        return_document=ReturnDocument.AFTER, session=session,
     )
 
 
-def checkIn(db, hardware_id, user_id):
+def checkIn(db, hardware_id, project_id, session):
     return db.hardware.find_one_and_update(
-        {"_id": hardware_id, "status": "checked_out", "checkedOutBy": user_id},
-        {"$set": {"status": "available", "checkedOutBy": None}},
-        return_document=ReturnDocument.AFTER,
+        {"_id": hardware_id, "status": "checked_out", "checkedOutTo": project_id},
+        {"$set": {"status": "available", "checkedOutTo": None, "checkedOutBy": None, "checkedOutAt": None}},
+        return_document=ReturnDocument.AFTER, session=session,
     )
 
 
 def updateHardware(db, hardware_id, fields):
-    # Metadata edits never change the current borrower or availability.
+    # Metadata edits never change the current project assignment or availability.
     return db.hardware.find_one_and_update(
         {"_id": hardware_id}, {"$set": fields}, return_document=ReturnDocument.AFTER
     )
@@ -43,7 +46,7 @@ def updateHardware(db, hardware_id, fields):
 def removeHardware(db, hardware_id):
     # A concurrent checkout also prevents deletion.
     return db.hardware.delete_one(
-        {"_id": hardware_id, "status": "available", "checkedOutBy": None}
+        {"_id": hardware_id, "status": "available", "checkedOutTo": None}
     ).deleted_count
 
 
@@ -55,7 +58,9 @@ def seedHardware(db):
                 "name": f"Hardware {number}",
                 "description": f"Shared hardware resource {number}.",
                 "status": "available",
+                "checkedOutTo": None,
                 "checkedOutBy": None,
+                "checkedOutAt": None,
                 "createdAt": datetime.now(timezone.utc),
             }},
             upsert=True,

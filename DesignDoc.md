@@ -2,9 +2,9 @@
 
 ## Purpose and scope
 
-Organizations share a limited collection of physical hardware. This portal lets users create an account, sign in, view hardware and its availability, check out an available resource, view their own checkouts, and return hardware. Each resource belongs to at most one borrower at a time. Administrators can inspect all resources and current borrowers and add, update, or remove hardware.
+Organizations share individual physical hardware resources. Users create accounts, sign in, create projects, join any number of projects, and check out available hardware to a project they have joined. Each resource belongs to at most one project at a time. Project members can view their shared inventory and return hardware, regardless of which member checked it out. All authenticated users can browse projects, resource availability, and checkout/return history.
 
-The initial sample catalog contains Hardware 1 through Hardware 6. The only resource states are **Available** and **Checked Out**. The previous hospital, patient, project, quantity, reservation, and maintenance workflows are outside this project's scope.
+Project creation is open to every authenticated user. Only the creator may delete a project, and all assigned hardware must first be returned. Administrators retain hardware add/edit/remove permissions and visibility of checkout actors. The initial sample catalog remains Hardware 1 through Hardware 6; resource states remain **Available** and **Checked out**. Authentication, branding, and the existing catalog design are preserved.
 
 ## Team and cadence
 
@@ -12,133 +12,113 @@ Saketh Devarkaonda, Tomi Alaofin, Aalim Momin, Yasir Hassan, and Sujan Goruganti
 
 One-week sprints with an event-based cadence, Zoom standups, and a Jira board. Collaboration uses Google Drive, GitHub, Zoom, Figma, Messages, and lab sections. Work is developed on GitHub feature branches and reviewed through pull requests. Sprint demonstrations review acceptance criteria; feedback and bugs go into Jira.
 
-## Architecture
+## Architecture and persistence
 
 ```text
-React.js / TypeScript components
-        |
+React / TypeScript (Vite)
         | JSON over HTTPS, Authorization: Bearer <JWT>
-        v
-Python / Flask API
-        |
-        | PyMongo; atomic single-document writes
-        v
-MongoDB: users, hardware
+Flask / PyMongo / PyJWT
+        | one MongoDB replica set; cross-database transactions
+        +-- HardwareLibrary_users.users
+        +-- HardwareLibrary_hardware.hardware
+        +-- HardwareLibrary_projects.projects
+        +-- HardwareLibrary_history.history
 ```
 
-Frontend builds with the template's Vite toolchain. Password hashing uses Werkzeug, included with Flask. JWT signing and validation use PyJWT. Tests use React Testing Library (Vitest/jsdom runner) and PyTest. Hosting targets are Vercel and/or AWS. No additional application framework or database is required.
+`MONGODB_DATABASE` defaults to `HardwareLibrary` and supplies the prefix. Each database name can be overridden independently; the application rejects duplicate database names. All databases must share the same MongoDB deployment. Indexes are created by `init-db` or lazily on the first database request. Transactions require a replica set, including Atlas or a single-node replica set for local development. A standalone server returns a setup error when a transaction is attempted.
 
-## MongoDB model
+### Users
 
-### `users`
+`_id`, `firstName`, `lastName`, `email`, `passwordHash`, `role`, `createdAt`. Existing validation and authentication are unchanged: unique normalized email, Werkzeug password hashing, 8–128 character passwords with uppercase/lowercase/number, regular-user public registration, and server-only administrator provisioning.
 
-| Property | Type | Rule |
-| --- | --- | --- |
-| `_id` | ObjectId | Generated user identity. |
-| `firstName`, `lastName` | String | Required, trimmed, 1–80 characters each. |
-| `email` | String | Required, normalized to lowercase, valid format, maximum 254 characters; unique index. |
-| `passwordHash` | String | Werkzeug scrypt password hash; never returned by the API. |
-| `role` | String | `user` or `admin`; registration only allows `user`. |
-| `createdAt` | UTC datetime | Set when the account is created. |
+### Projects
 
-Administrators are provisioned with the server-only `create-admin` command. Existing email addresses are rejected; the command does not silently promote users.
+| Field | Rule |
+| --- | --- |
+| `_id` | Immutable MongoDB identity, exposed as `id`. Used in relationships and route parameters. |
+| `projectId` | Unique human-readable label, 1–64 characters, uppercase, letters/numbers/hyphens/underscores; starts with a letter or number. Protected by a unique index. |
+| `name` | Required, trimmed, 1–120 characters. |
+| `description` | Optional, up to 2000 characters. |
+| `createdBy` | Creator's user ObjectId, taken from authentication. Cannot be supplied by the client. |
+| `memberIds` | Array of user ObjectIds; creator is automatically included. Indexed for membership queries. |
+| `hardwareCount` | Number of resources assigned to the project; updated transactionally with checkout/return. |
+| `createdAt` | UTC creation timestamp. |
 
-### `hardware`
+Joining uses `$addToSet`, making repeated joins idempotent. There is no one-project-per-user restriction. Public project objects include `creatorId`, `isCreator`, `isMember`, `memberCount`, and `hardwareCount` without exposing the membership list or other users' account details.
 
-| Property | Type | Rule |
-| --- | --- | --- |
-| `_id` | ObjectId | Immutable API resource identity, exposed as `id`. |
-| `hardwareId` | String | Unique human-readable ID, 1–64 characters, normalized uppercase; letters, numbers, hyphens, underscores; starts with a letter or number. |
-| `name` | String | Required, trimmed, 1–120 characters. |
-| `description` | String | Required, trimmed, 1–2000 characters. |
-| `status` | String | `available` or `checked_out`. |
-| `checkedOutBy` | ObjectId or null | Current user's `_id`, or null when available; indexed for personal checkouts. |
-| `createdAt` | UTC datetime | Set on creation. |
+### Hardware
 
-Every entry represents one resource. A unique index prevents duplicate hardware IDs. Hardware starts available, without a borrower. Ordinary metadata edits cannot change `status` or `checkedOutBy`.
+Each document represents one physical resource. Existing metadata fields (`_id`, unique `hardwareId`, `name`, `description`, `createdAt`) remain. Metadata edits cannot change assignment or availability.
 
-Checkout is one `find_one_and_update` filtered by `_id`, `status: available`, and `checkedOutBy: null`. It sets the borrower and status together. Return is one conditional update filtered by `_id`, `status: checked_out`, and the authenticated borrower's identity. Deletion filters on availability so that checkout cannot race a removal and lose an active assignment. These operations use [MongoDB's single-document atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/).
+| Assignment field | Rule |
+| --- | --- |
+| `status` | `available` or `checked_out`. |
+| `checkedOutTo` | Project ObjectId, or null when available; indexed. This is the resource owner. |
+| `checkedOutBy` | Authenticated actor who performed checkout, retained for audit/admin visibility. This does not grant return rights. |
+| `checkedOutAt` | UTC checkout timestamp, or null when available or importing an unknown original timestamp. |
 
-## Authentication and permissions
+The public response contains `project` (`id`, `projectId`, `name`) or null, `isCheckedOutByMyProjects`, `canReturn`, and `checkedOutAt`. Administrators also receive the current checkout actor as `checkedOutBy`. Regular users never receive another user's account details.
 
-Public routes are registration, login, and the database health check. Other routes require a valid HS256 JWT with issuer, audience, issued-at, expiry, and user subject claims. Tokens last one hour. The server secret is required and must be at least 32 bytes. The user and current role are loaded from MongoDB on every authenticated request. Missing/deleted accounts and invalid tokens return `401`; missing administrator permission returns `403`.
+### History
 
-Users can browse every resource, but can return only their own checkouts. Administrator permission permits hardware management and borrower visibility, while checkout and return still follow the same ownership rules. Only administrators receive current borrowers' names and emails. Every API response disables caching. Cross-origin requests are allowed only for configured frontend origins.
+Each event stores `_id`, `action` (`checkout`, `return`, or `migrated_checkout`), `createdAt`, `actorId`, and hardware/project snapshots containing their immutable identities, human-readable IDs, and names. Events are not edited or deleted by the API. Snapshots preserve the meaning of old entries after metadata changes or hardware/project deletion. The history database is separate from all entity databases.
+
+History is available to authenticated users and sorted by event time, newest first, with ObjectId as the tie-breaker. Requests return at most 50 entries and a `nextCursor` for older events. Optional project and hardware filters use immutable identities, so reused display labels cannot merge separate records' history. Regular users receive `isByMe`; administrators additionally receive the actor's public user object. The UI displays local time from stored UTC timestamps.
+
+## Consistency and authorization
+
+Checkout requires exactly `{ "projectId": "<project's immutable id>" }`. A user ID, missing project, nonmembership, nonexistent project, or unavailable resource is rejected by the server.
+
+Checkout runs in one cross-database transaction:
+
+1. Match the chosen project and authenticated membership, incrementing its hardware count.
+2. Atomically change the hardware from available/unassigned to checked out to that project.
+3. Insert the checkout history event.
+
+Return similarly checks current project membership, decrements the project count, clears the resource's assignment, and inserts a return event in one transaction. Any failure rolls back all three changes. PyMongo retries transient transaction conflicts; concurrent checkout has one winner, and concurrent returns create one event.
+
+Project deletion atomically matches creator identity and a zero hardware count. Since checkout writes that same project document, a checkout/deletion race either keeps the project with its assignment or deletes the project and rejects checkout. Administrator status does not override project deletion ownership or return membership. Available-hardware deletion remains a conditional atomic operation, preventing checkout/removal races.
+
+JWTs require HS256, issuer, audience, issued-at, expiry, and a valid user subject. They expire after one hour; the current account and role are read from MongoDB for every authenticated request. Other users' names/emails are administrator-only. All responses disable caching; CORS remains restricted to configured frontend origins.
 
 ## API contract
 
-All request and response bodies use JSON except successful deletion (`204`, empty body). Errors have the form `{"success": false, "message": "Explanation"}`. Common status codes: `400` invalid input, `401` missing/invalid authentication, `403` permission denied, `404` unknown resource, `409` conflicting checkout/ID/email or removal of checked-out hardware, `503` unavailable database.
+Errors use `{ "success": false, "message": "Explanation" }`. Status codes: `400` invalid input, `401` missing/invalid authentication, `403` denied permission, `404` unknown identity, `409` duplicate ID/email or resource conflict, `503` database failure. Successful deletion returns `204` with an empty body.
 
-| Method | Path | Permission | Request | Success |
-| --- | --- | --- | --- | --- |
-| POST | `/api/register` | Public | `firstName`, `lastName`, `email`, `password`, `confirmPassword` | `201 {success, token, user}` |
-| POST | `/api/login` | Public | `email`, `password` | `200 {success, token, user}` |
-| GET | `/api/me` | User | None | `200 {user}` |
-| GET | `/api/hardware` | User | Optional `?mine=true` | `200 {hardware: [...]}` |
-| GET | `/api/hardware/:id` | User | None | `200 {hardware}` |
-| POST | `/api/hardware/:id/checkout` | User | None | `200 {hardware, message}` |
-| POST | `/api/hardware/:id/return` | Borrower | None | `200 {hardware, message}` |
-| POST | `/api/hardware` | Admin | `hardwareId`, `name`, `description` | `201 {hardware, message}` |
-| PUT | `/api/hardware/:id` | Admin | All three metadata fields | `200 {hardware, message}` |
-| DELETE | `/api/hardware/:id` | Admin | None; resource must be available | `204` |
-| GET | `/api/health` | Public | None | `200 {status: "ok"}` if MongoDB is reachable |
+| Method | Path | Permission / behavior |
+| --- | --- | --- |
+| POST | `/api/register` | Public; unchanged account fields, returns session (`201`). |
+| POST | `/api/login` | Public; email/password, returns session. |
+| GET | `/api/me` | Authenticated; current public user. |
+| GET | `/api/projects` | Authenticated; all projects, or `?mine=true` for joined projects. |
+| POST | `/api/projects` | Authenticated; `projectId`, `name`, optional `description`; creator auto-joins (`201`). |
+| POST | `/api/projects/:id/join` | Authenticated; joins idempotently. |
+| DELETE | `/api/projects/:id` | Creator only; no assigned hardware. |
+| GET | `/api/hardware` | Authenticated; optionally `?mine=true` for joined-project inventory or `?project=<id>`. |
+| GET | `/api/hardware/:id` | Authenticated; one resource with current project and return permission. |
+| POST | `/api/hardware/:id/checkout` | Project member; requires `projectId` containing immutable project `id`. |
+| POST | `/api/hardware/:id/return` | Member of the assigned project; no caller-supplied user ID. |
+| POST | `/api/hardware` | Admin; `hardwareId`, `name`, `description` (`201`). |
+| PUT | `/api/hardware/:id` | Admin; all three metadata fields, preserving current assignment. |
+| DELETE | `/api/hardware/:id` | Admin; available hardware only. |
+| GET | `/api/history` | Authenticated; optional `project`, `hardware`, `before` filters; `{history, nextCursor}`. |
+| GET | `/api/health` | Public; database/index connectivity. |
 
-`:id` is the MongoDB identity exposed by the API, not the editable `hardwareId` label. The registration password must have 8–128 characters, uppercase, lowercase, and a number. Login errors do not distinguish incorrect passwords from nonexistent accounts. Hardware writes reject unrecognized fields, including caller-supplied availability or ownership.
+All route `:id` values and relationship filters refer to immutable ObjectIds exposed as `id`, not display labels. In the checkout body, the `projectId` key contains this immutable `id`; in project creation it contains the unique human-readable label.
 
-Public user shape:
+## Frontend behavior
 
-```json
-{
-  "id": "MongoDB ObjectId as a string",
-  "firstName": "Alex",
-  "lastName": "User",
-  "email": "alex@example.com",
-  "role": "user"
-}
-```
+The existing header, authentication forms, catalog rows, black-and-white styling, and hardware administration remain. Navigation adds **Projects** and **History**, and replaces personal checkouts with **My projects’ hardware**.
 
-Hardware shape:
+- **All hardware:** a required joined-project selector enables checkout. Availability and project filters expose current assignment status. Return is available to every member of the assigned project.
+- **Projects:** any user can create a unique project and join multiple projects. Membership, hardware counts, a My projects only filter, and View hardware are available. Delete appears only for creators and requires explicit confirmation; assigned hardware disables deletion with an explanation.
+- **Project inventory:** View hardware filters the existing catalog to the project's resources. Assign more hardware selects that project and shows available resources.
+- **History:** project-filtered checkout/return events, retained after deletion; manual refresh, pagination, empty states, and retries.
 
-```json
-{
-  "id": "MongoDB ObjectId as a string",
-  "hardwareId": "HW-001",
-  "name": "Hardware 1",
-  "description": "Shared hardware resource 1.",
-  "status": "available",
-  "isCheckedOutByMe": false
-}
-```
+Hardware and projects refresh every five seconds while visible, on focus, and after mutations. Failed refreshes retain the last complete catalog/project snapshot and show a retry warning. Stale checkout or deletion attempts are rechecked by the API. Pending mutations disable duplicate actions. Forms retain user input after errors. Layouts adapt to narrow screens; history tables scroll horizontally when needed.
 
-For administrators, the hardware object additionally includes `checkedOutBy`, which is null when available or the public user object for the current borrower. Regular users receive only `isCheckedOutByMe`, not another borrower's identifying information.
+## Migration and validation
 
-## React components and behavior
+`flask --app app migrate-db` copies the old hardware-library database into the separated databases while the old API is stopped. It preserves user identities, passwords, roles, and hardware metadata. Active user checkouts become assignments to automatically created projects owned by those users, with clearly labeled import events. Source records are untouched, and existing destination identities are skipped on reruns. Previously unrecorded history and original checkout times cannot be reconstructed. Full setup and migration steps are in [README.md](README.md).
 
-- `App`: session restoration, expiry handling, sign out, and navigation.
-- `RegistrationPage` and `LoginPage`: accessible forms, validation, submission state, server error messages.
-- `HardwarePage`: catalog, personal checkouts, administrator view, mutation feedback.
-- `HardwareCard`: hardware details, availability badge, checkout or return button, and administrator edit/remove actions.
-- `HardwareForm`: add/edit metadata with validation and retained input after errors.
-- `useHardware`: refreshes the catalog every five seconds while visible, on focus, and after mutations; cancels stale reads and preserves last-known data if the API is unavailable.
-
-The catalog disables checkout for checked-out resources. A stale browser can still receive `409`; the UI displays the conflict and reloads availability. Pending mutations disable repeated actions. Removal requires an explicit confirmation, and checked-out hardware cannot be removed until returned. Forms and cards adapt to narrow screens.
-
-## User stories and acceptance criteria
-
-| Story | Acceptance criteria |
-| --- | --- |
-| Create a secure account | Valid input creates a regular user with a hashed password and returns a JWT. Duplicate emails and invalid input are rejected. Users cannot select administrator permissions. |
-| Sign in | Correct credentials return a JWT and user; incorrect credentials return `401`. Expired and forged JWTs cannot read or mutate protected data. |
-| View all hardware and availability | Authenticated users see each resource's ID, name, description, and Available/Checked Out state. Availability refreshes automatically and errors are visible. |
-| Check out hardware | Available hardware is assigned to the authenticated user. The UI confirms success and shows it among personal checkouts. |
-| Prevent duplicate checkout | Concurrent requests for one resource have exactly one successful winner; all other requests receive `409`. |
-| View my hardware | The personal view includes only resources assigned to the current user. |
-| Return hardware | Only the current borrower can return the resource; ownership clears and status becomes Available. Another user can then check it out. |
-| Administrator sign-in and visibility | An administrator uses the same login flow and can see all resources and each current borrower's identity. |
-| Add hardware | An administrator can add a unique hardware ID with name and description. It starts Available. Regular users receive `403`. |
-| Update hardware | An administrator can edit metadata, including ID; ownership is preserved. Duplicate IDs and attempted ownership changes are rejected. |
-| Remove hardware | An administrator confirms removal of available hardware. A checked-out resource returns `409` until returned. |
-
-## Integration and demonstration
-
-PyTest verifies API behavior using a real MongoDB, including a 12-request checkout race. React Testing Library exercises the user-facing forms and actions. Each test run uses isolated database names. Build/type checks verify the TypeScript frontend. A demonstration uses two user sessions and an administrator to show checkout, conflict prevention, return/reuse, and hardware management. Setup, configuration, verification commands, and Vercel/AWS deployment instructions are in [README.md](README.md).
+PyTest covers account security, administrator permissions, unique IDs, multiple memberships, membership-based checkout/return, creator-only deletion, real MongoDB transaction rollback, concurrency races, durable history and pagination, database separation, and repeatable migration. React Testing Library covers the forms, project and hardware flows, selection requirements, filters, history, retries, and session lifecycle. TypeScript and Vite verify the production build.

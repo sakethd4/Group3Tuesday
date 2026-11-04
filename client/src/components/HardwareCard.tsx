@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Hardware } from "../types";
 
-export default function HardwareCard({ hardware, admin, managing, busy, onCheckout, onReturn, onEdit, onRemove }: {
+export default function HardwareCard({ hardware, admin, managing, busy, checkoutReady, onCheckout, onReturn, onEdit, onRemove }: {
   hardware: Hardware;
   admin: boolean;
   managing: boolean;
   busy: boolean;
+  checkoutReady: boolean;
   onCheckout: () => void;
   onReturn: () => void;
   onEdit: () => void;
@@ -15,7 +16,7 @@ export default function HardwareCard({ hardware, admin, managing, busy, onChecko
   const available = hardware.status === "available";
   const borrower = hardware.checkedOutBy;
   return (
-    <article className={`hardware-card ${hardware.isCheckedOutByMe ? "hardware-mine" : ""}`} aria-labelledby={`hardware-${hardware.id}`}>
+    <article className={`hardware-card ${hardware.isCheckedOutByMyProjects ? "hardware-mine" : ""}`} aria-labelledby={`hardware-${hardware.id}`}>
       <div className="resource-details">
         <span className="hardware-id">{hardware.hardwareId}</span>
         <h2 id={`hardware-${hardware.id}`}>{hardware.name}</h2>
@@ -26,10 +27,9 @@ export default function HardwareCard({ hardware, admin, managing, busy, onChecko
           <span aria-hidden="true" className="status-dot" />{available ? "Available" : "Checked out"}
         </span>
         <div className="card-assignment">
-          {hardware.isCheckedOutByMe ? <span className="yours">Checked out by you</span>
-            : !available && !admin ? <span>Currently in use by another user</span>
-            : available ? <span>Ready to check out</span> : null}
-          {admin && borrower && <span className="borrower">Borrower: {borrower.firstName} {borrower.lastName}<small>{borrower.email}</small></span>}
+          {hardware.project ? <span>Project: {hardware.project.name}<br />{hardware.project.projectId}</span>
+            : available ? <span>Ready to check out to a project</span> : null}
+          {admin && borrower && <span className="borrower">Checked out by: {borrower.firstName} {borrower.lastName}<small>{borrower.email}</small></span>}
         </div>
       </div>
       {managing ? (
@@ -47,10 +47,11 @@ export default function HardwareCard({ hardware, admin, managing, busy, onChecko
         </div>
       ) : (
         <div className="card-actions">
-          {hardware.isCheckedOutByMe ? (
+          {hardware.canReturn ? (
             <button className="secondary" aria-label={`Return hardware: ${hardware.name}`} disabled={busy} onClick={onReturn}>Return hardware</button>
           ) : (
-            <button aria-label={`${available ? "Check out" : "Unavailable"}: ${hardware.name}`} disabled={busy || !available} onClick={onCheckout} className={available ? "primary" : "unavailable-button"}>
+            <button aria-label={`${available ? "Check out" : "Unavailable"}: ${hardware.name}`} disabled={busy || !available || !checkoutReady} onClick={onCheckout} className={available ? "primary" : "unavailable-button"}
+              title={available && !checkoutReady ? "Select a project you have joined before checking out." : undefined}>
               {available ? "Check out" : "Unavailable"}
             </button>
           )}

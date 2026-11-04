@@ -9,14 +9,18 @@ import click
 import jwt
 from bson import ObjectId
 from flask import Flask, g, jsonify, request
-from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo import MongoClient, ReturnDocument
+from pymongo.errors import DuplicateKeyError, OperationFailure, PyMongoError
 from werkzeug.exceptions import HTTPException
 
 if __package__:
-    from . import hardwareDatabase, usersDatabase
+    from . import database, hardwareDatabase, historyDatabase, migration, projectsDatabase, usersDatabase
 else:
+    import database
     import hardwareDatabase
+    import historyDatabase
+    import migration
+    import projectsDatabase
     import usersDatabase
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -71,11 +75,23 @@ def hardware_fields(payload):
     }
 
 
+def project_fields(payload):
+    if set(payload) - {"projectId", "name", "description"}:
+        raise ApiError("Only projectId, name, and description can be supplied.")
+    project_id = text_field(payload, "projectId", 64).upper()
+    if not HARDWARE_ID_RE.fullmatch(project_id):
+        raise ApiError("Project ID must use letters, numbers, hyphens, or underscores.")
+    return {"projectId": project_id, "name": text_field(payload, "name", 120),
+            "description": text_field({"description": payload.get("description", "")}, "description", 2000, 0)}
+
+
 def create_app(config=None):
     app = Flask(__name__)
     app.config.from_mapping(
         MONGODB_URI=os.environ.get("MONGODB_URI", "mongodb://127.0.0.1:27017"),
         MONGODB_DATABASE=os.environ.get("MONGODB_DATABASE", "HardwareLibrary"),
+        **{f"MONGODB_{kind}_DATABASE": os.environ.get(f"MONGODB_{kind}_DATABASE")
+           for kind in ("USERS", "HARDWARE", "PROJECTS", "HISTORY")},
         JWT_SECRET=os.environ.get("JWT_SECRET", ""),
         JWT_EXPIRATION_SECONDS=3600,
         CLIENT_ORIGIN=os.environ.get("CLIENT_ORIGIN", "http://localhost:5173"),
@@ -88,7 +104,8 @@ def create_app(config=None):
 
     client = MongoClient(app.config["MONGODB_URI"], serverSelectionTimeoutMS=5000, tz_aware=True)
     app.extensions["mongo_client"] = client
-    db = client[app.config["MONGODB_DATABASE"]]
+    db = database.collections(client, app.config)
+    app.extensions["databases"] = db
     index_lock = Lock()
     indexes_ready = False
 
@@ -97,9 +114,7 @@ def create_app(config=None):
         if not indexes_ready:
             with index_lock:
                 if not indexes_ready:
-                    db.users.create_index("email", unique=True)
-                    db.hardware.create_index("hardwareId", unique=True)
-                    db.hardware.create_index("checkedOutBy")
+                    database.ensure_indexes(db)
                     indexes_ready = True
         return db
 
@@ -109,9 +124,9 @@ def create_app(config=None):
             raise ApiError("Request body must be a JSON object.")
         return payload
 
-    def object_id(value):
-        if not ObjectId.is_valid(value):
-            raise ApiError("Hardware not found.", 404)
+    def object_id(value, label="Hardware"):
+        if not isinstance(value, str) or not ObjectId.is_valid(value):
+            raise ApiError(f"{label} not found.", 404)
         return ObjectId(value)
 
     def authenticate(admin=False):
@@ -150,6 +165,8 @@ def create_app(config=None):
         return jsonify(success=True, token=token, user=usersDatabase.public_user(user)), status
 
     def serialize_hardware(records):
+        project_ids = {item.get("checkedOutTo") for item in records} - {None}
+        projects = {p["_id"]: p for p in get_db().projects.find({"_id": {"$in": list(project_ids)}})}
         users = {}
         if g.user["role"] == "admin":
             borrower_ids = {item["checkedOutBy"] for item in records if item["checkedOutBy"]}
@@ -159,11 +176,16 @@ def create_app(config=None):
                 )}
         result = []
         for item in records:
+            project = projects.get(item.get("checkedOutTo"))
+            member = bool(project and g.user["_id"] in project["memberIds"])
             entry = {
                 "id": str(item["_id"]), "hardwareId": item["hardwareId"],
                 "name": item["name"], "description": item["description"],
                 "status": item["status"],
-                "isCheckedOutByMe": item["checkedOutBy"] == g.user["_id"],
+                "project": projectsDatabase.reference(project) if project else None,
+                "isCheckedOutByMyProjects": member,
+                "canReturn": member and item["status"] == "checked_out",
+                "checkedOutAt": item["checkedOutAt"].isoformat() if item.get("checkedOutAt") else None,
             }
             if g.user["role"] == "admin":
                 entry["checkedOutBy"] = users.get(item["checkedOutBy"])
@@ -199,6 +221,8 @@ def create_app(config=None):
     @app.errorhandler(PyMongoError)
     def database_error(error):
         app.logger.error("Database request failed (%s).", type(error).__name__)
+        if isinstance(error, OperationFailure) and error.code == 20:
+            return jsonify(success=False, message="MongoDB must run as a replica set to save project checkouts and history. See the setup guide."), 503
         return jsonify(success=False, message="Database is unavailable. Please try again shortly."), 503
 
     @app.errorhandler(HTTPException)
@@ -207,7 +231,8 @@ def create_app(config=None):
 
     @app.get("/api/health")
     def health():
-        get_db().command("ping")
+        get_db()
+        client.admin.command("ping")
         return jsonify(status="ok")
 
     @app.post("/api/register")
@@ -236,10 +261,82 @@ def create_app(config=None):
     def me():
         return jsonify(user=usersDatabase.public_user(g.user))
 
+    @app.get("/api/projects")
+    @authenticate()
+    def project_list():
+        query = {"memberIds": g.user["_id"]} if request.args.get("mine") == "true" else {}
+        return jsonify(projects=[projectsDatabase.public_project(p, g.user["_id"])
+                                 for p in get_db().projects.find(query).sort("projectId", 1)])
+
+    @app.post("/api/projects")
+    @authenticate()
+    def create_project():
+        try:
+            project = projectsDatabase.createProject(get_db(), project_fields(body()), g.user["_id"])
+        except DuplicateKeyError:
+            raise ApiError("A project with this project ID already exists.", 409)
+        return jsonify(project=projectsDatabase.public_project(project, g.user["_id"])), 201
+
+    @app.post("/api/projects/<project_id>/join")
+    @authenticate()
+    def join_project(project_id):
+        project = projectsDatabase.joinProject(get_db(), object_id(project_id, "Project"), g.user["_id"])
+        if not project:
+            raise ApiError("Project not found.", 404)
+        return jsonify(project=projectsDatabase.public_project(project, g.user["_id"]))
+
+    @app.delete("/api/projects/<project_id>")
+    @authenticate()
+    def delete_project(project_id):
+        identifier = object_id(project_id, "Project")
+        # Checkout increments this same document in its transaction. MongoDB's
+        # write conflict handling prevents deleting a project during allocation.
+        removed = get_db().projects.delete_one({"_id": identifier, "createdBy": g.user["_id"], "hardwareCount": 0})
+        if not removed.deleted_count:
+            project = db.projects.find_one({"_id": identifier})
+            if not project:
+                raise ApiError("Project not found.", 404)
+            if project["createdBy"] != g.user["_id"]:
+                raise ApiError("Only the creator can delete this project.", 403)
+            raise ApiError("Return this project's hardware before deleting it.", 409)
+        return "", 204
+
+    @app.get("/api/history")
+    @authenticate()
+    def history_list():
+        query = {}
+        if request.args.get("project"):
+            query["project.id"] = str(object_id(request.args["project"], "Project"))
+        if request.args.get("hardware"):
+            query["hardware.id"] = str(object_id(request.args["hardware"]))
+        if request.args.get("before"):
+            cursor = db.history.find_one({"_id": object_id(request.args["before"], "History cursor")}, {"createdAt": 1})
+            if not cursor:
+                raise ApiError("History cursor not found.", 404)
+            query["$or"] = [
+                {"createdAt": {"$lt": cursor["createdAt"]}},
+                {"createdAt": cursor["createdAt"], "_id": {"$lt": cursor["_id"]}},
+            ]
+        records = list(get_db().history.find(query).sort([("createdAt", -1), ("_id", -1)]).limit(51))
+        users = {}
+        if g.user["role"] == "admin":
+            users = {u["_id"]: usersDatabase.public_user(u) for u in db.users.find(
+                {"_id": {"$in": [r["actorId"] for r in records]}})}
+        events = [{
+            "id": str(r["_id"]), "action": r["action"], "hardware": r["hardware"], "project": r["project"],
+            "createdAt": r["createdAt"].isoformat(), "isByMe": r["actorId"] == g.user["_id"],
+            **({"actor": users.get(r["actorId"])} if g.user["role"] == "admin" else {}),
+        } for r in records[:50]]
+        return jsonify(history=events, nextCursor=events[-1]["id"] if len(records) > 50 else None)
+
     @app.get("/api/hardware")
     @authenticate()
     def hardware_list():
-        query = {"checkedOutBy": g.user["_id"]} if request.args.get("mine") == "true" else {}
+        query = {}
+        if request.args.get("mine") == "true":
+            query["checkedOutTo"] = {"$in": [p["_id"] for p in get_db().projects.find({"memberIds": g.user["_id"]}, {"_id": 1})]}
+        if request.args.get("project"):
+            query = {"$and": [query, {"checkedOutTo": object_id(request.args["project"], "Project")}]}
         records = list(get_db().hardware.find(query).sort("hardwareId", 1))
         return jsonify(hardware=serialize_hardware(records))
 
@@ -255,25 +352,55 @@ def create_app(config=None):
     @authenticate()
     def checkout(resource_id):
         identifier = object_id(resource_id)
-        resource = hardwareDatabase.checkOut(get_db(), identifier, g.user["_id"])
-        if not resource:
-            if not get_db().hardware.find_one({"_id": identifier}, {"_id": 1}):
-                raise ApiError("Hardware not found.", 404)
-            raise ApiError("This hardware is already checked out. Please choose an available resource.", 409)
-        return jsonify(hardware=serialize_hardware([resource])[0], message="Hardware checked out.")
+        payload = body()
+        if set(payload) != {"projectId"}:
+            raise ApiError("Choose a project to check out hardware; only projectId is accepted.")
+        project_id = object_id(payload["projectId"], "Project")
+
+        def allocate(session):
+            project = db.projects.find_one_and_update(
+                {"_id": project_id, "memberIds": g.user["_id"]}, {"$inc": {"hardwareCount": 1}},
+                return_document=ReturnDocument.AFTER, session=session,
+            )
+            if not project:
+                if not db.projects.find_one({"_id": project_id}, session=session):
+                    raise ApiError("Project not found.", 404)
+                raise ApiError("Join this project before checking out hardware to it.", 403)
+            resource = hardwareDatabase.checkOut(db, identifier, project_id, g.user["_id"], session)
+            if not resource:
+                if not db.hardware.find_one({"_id": identifier}, session=session):
+                    raise ApiError("Hardware not found.", 404)
+                raise ApiError("This hardware is already checked out. Please choose an available resource.", 409)
+            historyDatabase.record(db, "checkout", resource, project, g.user["_id"], session)
+            return resource
+
+        resource = database.transaction(client, allocate)
+        return jsonify(hardware=serialize_hardware([resource])[0], message="Hardware checked out to project.")
 
     @app.post("/api/hardware/<resource_id>/return")
     @authenticate()
     def return_hardware(resource_id):
         identifier = object_id(resource_id)
-        resource = hardwareDatabase.checkIn(get_db(), identifier, g.user["_id"])
-        if not resource:
-            current = get_db().hardware.find_one({"_id": identifier})
+
+        def release(session):
+            current = db.hardware.find_one({"_id": identifier}, session=session)
             if not current:
                 raise ApiError("Hardware not found.", 404)
             if current["status"] == "available":
                 raise ApiError("This hardware has already been returned.", 409)
-            raise ApiError("You can only return hardware checked out by you.", 403)
+            project = db.projects.find_one_and_update(
+                {"_id": current["checkedOutTo"], "memberIds": g.user["_id"], "hardwareCount": {"$gt": 0}},
+                {"$inc": {"hardwareCount": -1}}, return_document=ReturnDocument.AFTER, session=session,
+            )
+            if not project:
+                raise ApiError("Only members of the assigned project can return this hardware.", 403)
+            resource = hardwareDatabase.checkIn(db, identifier, project["_id"], session)
+            if not resource:
+                raise ApiError("The hardware assignment changed. Refresh and try again.", 409)
+            historyDatabase.record(db, "return", current, project, g.user["_id"], session)
+            return resource
+
+        resource = database.transaction(client, release)
         return jsonify(hardware=serialize_hardware([resource])[0], message="Hardware returned.")
 
     @app.post("/api/hardware")
@@ -325,6 +452,16 @@ def create_app(config=None):
         except usersDatabase.DuplicateEmailError:
             raise click.ClickException("An account with this email already exists; no permissions changed.")
         click.echo("Administrator account created.")
+
+    @app.cli.command("migrate-db")
+    @click.option("--source", help="Legacy database name; defaults to MONGODB_DATABASE.")
+    def migrate_db(source):
+        """Copy legacy users/hardware while the old API is stopped; preserve the source."""
+        try:
+            users, hardware = migration.migrate(client, get_db(), source or app.config["MONGODB_DATABASE"])
+        except (ValueError, PyMongoError) as error:
+            raise click.ClickException(f"Migration stopped ({type(error).__name__}). Source data is unchanged. Check database access, unique IDs, and borrower accounts before retrying.")
+        click.echo(f"Imported {users} users and {hardware} hardware resources. Source data is unchanged.")
 
     return app
 

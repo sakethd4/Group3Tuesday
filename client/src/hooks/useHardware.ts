@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Hardware } from "../types";
+import { Hardware, Project } from "../types";
 
 export default function useHardware(token: string) {
   const [hardware, setHardware] = useState<Hardware[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -14,9 +15,13 @@ export default function useHardware(token: string) {
     const controller = new AbortController();
     activeRequest.current = controller;
     try {
-      const result = await api<{ hardware: Hardware[] }>("/hardware", { signal: controller.signal }, token);
+      const [result, projectResult] = await Promise.all([
+        api<{ hardware: Hardware[] }>("/hardware", { signal: controller.signal }, token),
+        api<{ projects: Project[] }>("/projects", { signal: controller.signal }, token),
+      ]);
       if (controller.signal.aborted) return;
       setHardware(result.hardware);
+      setProjects(projectResult.projects);
       setError("");
       setUpdatedAt(new Date());
     } catch (cause) {
@@ -44,5 +49,5 @@ export default function useHardware(token: string) {
     };
   }, [refresh]);
 
-  return { hardware, loading, error, updatedAt, refresh };
+  return { hardware, projects, loading, error, updatedAt, refresh };
 }
