@@ -8,7 +8,7 @@ import HistoryPanel from "../components/HistoryPanel";
 import useHardware from "../hooks/useHardware";
 import { Hardware, HardwareFields, Notice, Project, ProjectFields, Session } from "../types";
 
-type View = "catalog" | "mine" | "manage" | "projects" | "history";
+type View = "catalog" | "projectHardware" | "manage" | "projects" | "history";
 
 export default function HardwarePage({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const { hardware, projects, loading, error, updatedAt, refresh } = useHardware(session.token);
@@ -25,8 +25,10 @@ export default function HardwarePage({ session, onSignOut }: { session: Session;
   const joined = projects.filter((project) => project.isMember);
   const checkoutProject = joined.find((project) => project.id === checkoutProjectId);
   const selectedProject = projects.find((project) => project.id === projectFilter);
-  const visible = (view === "mine" ? mine : hardware).filter((item) =>
-    (!projectFilter || item.project?.id === projectFilter) && (statusFilter === "all" || item.status === statusFilter));
+  const visible = hardware.filter((item) => view === "projectHardware"
+    ? Boolean(selectedProject) && item.status === "checked_out" && item.project?.id === selectedProject?.id
+    : (view !== "manage" || !projectFilter || item.project?.id === projectFilter)
+      && (statusFilter === "all" || item.status === statusFilter));
   const available = hardware.filter((item) => item.status === "available").length;
 
   function changeView(next: View) {
@@ -98,9 +100,8 @@ export default function HardwarePage({ session, onSignOut }: { session: Session;
   }
 
   function viewProject(project: Project) {
-    changeView("catalog");
+    changeView("projectHardware");
     setProjectFilter(project.id);
-    if (project.isMember) setCheckoutProjectId(project.id);
   }
 
   async function save(fields: HardwareFields) {
@@ -138,8 +139,8 @@ export default function HardwarePage({ session, onSignOut }: { session: Session;
             <button aria-current={view === "catalog" ? "page" : undefined} onClick={() => changeView("catalog")} disabled={busy}>
               All hardware
             </button>
-            <button aria-current={view === "mine" ? "page" : undefined} onClick={() => changeView("mine")} disabled={busy}>
-              My projects’ hardware <span>{mine.length}</span>
+            <button aria-current={view === "projectHardware" ? "page" : undefined} onClick={() => changeView("projectHardware")} disabled={busy}>
+              Projects' Hardware
             </button>
             <button aria-current={view === "projects" ? "page" : undefined} onClick={() => changeView("projects")} disabled={busy}>Projects <span>{joined.length}</span></button>
             <button aria-current={view === "history" ? "page" : undefined} onClick={() => changeView("history")} disabled={busy}>History</button>
@@ -156,8 +157,8 @@ export default function HardwarePage({ session, onSignOut }: { session: Session;
         </aside>
         <main className="portal-main">
           <div className="page-heading">
-            <h1>{view === "mine" ? "My projects’ hardware" : view === "manage" ? "Manage hardware" : view === "projects" ? "Projects" : view === "history" ? "Checkout history" : "Hardware catalog"}</h1>
-            <p className="page-copy">{view === "mine" ? "Hardware available to your projects. Any project member can return it when finished."
+            <h1>{view === "projectHardware" ? "Projects' Hardware" : view === "manage" ? "Manage hardware" : view === "projects" ? "Projects" : view === "history" ? "Checkout history" : "Hardware catalog"}</h1>
+            <p className="page-copy">{view === "projectHardware" ? "Select a project to see its checked-out hardware. Any project member can return it when finished."
               : view === "manage" ? "Keep the library up to date and see which project has each resource."
               : view === "projects" ? "Create a project or join existing projects to share hardware with your team."
               : view === "history" ? "Review past hardware checkouts and returns by project."
@@ -176,35 +177,38 @@ export default function HardwarePage({ session, onSignOut }: { session: Session;
             : view === "projects" ? <ProjectsPanel projects={projects} busy={busy} onCreate={createProject}
               onJoin={(project) => void projectAction(project, "join")} onDelete={(project) => void projectAction(project, "delete")} onView={viewProject} />
             : <>
-          {view !== "manage" && <div className="checkout-project">
+          {view === "catalog" && <div className="checkout-project">
             <label>Check out to project<select value={checkoutProject?.id ?? ""} onChange={(event) => setCheckoutProjectId(event.target.value)} disabled={busy || !joined.length}>
               <option value="">Select a joined project</option>
               {joined.map((project) => <option value={project.id} key={project.id}>{project.projectId} — {project.name}</option>)}
             </select></label>
             {!joined.length && <p>Create or join a project before checking out hardware. <button className="text-button" onClick={() => changeView("projects")}>Browse projects</button></p>}
           </div>}
-          <div className="catalog-filters">
-            <label>Availability<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} disabled={busy}>
+          <div className={`catalog-filters${view !== "manage" ? " single-filter" : ""}`}>
+            {view !== "projectHardware" && <label>Availability<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} disabled={busy}>
               <option value="all">All statuses</option><option value="available">Available</option><option value="checked_out">Checked out</option>
-            </select></label>
-            <label>Hardware assigned to<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} disabled={busy}>
-              <option value="">All projects</option>
+            </select></label>}
+            {view !== "catalog" && <label>Hardware assigned to<select value={selectedProject?.id ?? ""} onChange={(event) => setProjectFilter(event.target.value)} disabled={busy}>
+              <option value="">{view === "projectHardware" ? "Select a project" : "All projects"}</option>
               {projects.map((project) => <option value={project.id} key={project.id}>{project.projectId} — {project.name}</option>)}
-            </select></label>
+            </select></label>}
           </div>
           {selectedProject && <p className="project-inventory-note">Hardware assigned to <strong>{selectedProject.name}</strong> is available for that project’s use.
-            {selectedProject.isMember && <button className="text-button" disabled={busy} onClick={() => { setCheckoutProjectId(selectedProject.id); setProjectFilter(""); setStatusFilter("available"); }}>Assign more hardware</button>}</p>}
+            {selectedProject.isMember && <button className="text-button" disabled={busy} onClick={() => { changeView("catalog"); setCheckoutProjectId(selectedProject.id); setStatusFilter("available"); }}>Assign more hardware</button>}</p>}
           {editor && <HardwareForm key={editor.hardware?.id ?? "new"} hardware={editor.hardware} onSave={save} onCancel={() => setEditor(null)} />}
-          {visible.length ? <section className="hardware-grid" aria-label={view === "mine" ? "Your projects’ hardware" : "Hardware resources"} aria-busy={busy}>
+          {visible.length ? <section className="hardware-grid" aria-label={view === "projectHardware" ? "Projects' Hardware" : "Hardware resources"} aria-busy={busy}>
               <div className="catalog-columns" aria-hidden="true"><span>Resource</span><span>Availability</span><span>Action</span></div>
               {visible.map((item) => <HardwareCard key={item.id} hardware={item} admin={admin} managing={view === "manage"}
-                busy={busy || Boolean(editor)} checkoutReady={Boolean(checkoutProject)} onCheckout={() => void act(item, "checkout")} onReturn={() => void act(item, "return")}
+                busy={busy || Boolean(editor)} checkoutReady={view === "catalog" && Boolean(checkoutProject)} onCheckout={() => void act(item, "checkout")} onReturn={() => void act(item, "return")}
                 onEdit={() => { setEditor({ hardware: item }); setNotice(null); }} onRemove={() => void act(item, "remove")} />)}
             </section>
             : !error && <div className="empty-state">
-              <h2>{projectFilter || statusFilter !== "all" ? "No matching hardware" : view === "mine" ? "No hardware assigned to your projects" : "No hardware yet"}</h2>
-              <p>{projectFilter || statusFilter !== "all" ? "Choose another filter or check out available hardware to this project." : view === "mine" ? "Hardware checked out to projects you join will appear here." : admin ? "Add hardware to make it available to your users." : "Your administrator hasn’t added any hardware yet."}</p>
-              {view === "mine" && <button className="secondary" onClick={() => changeView("catalog")}>Browse hardware</button>}
+              <h2>{view === "projectHardware" ? selectedProject ? "No hardware checked out to this project" : "Select a project to view its hardware"
+                : projectFilter || statusFilter !== "all" ? "No matching hardware" : "No hardware yet"}</h2>
+              <p>{view === "projectHardware" ? selectedProject ? "Hardware checked out to this project will appear here." : "Choose a project using the Hardware assigned to dropdown."
+                : projectFilter || statusFilter !== "all" ? "Choose another filter to see more hardware."
+                : admin ? "Add hardware to make it available to your users." : "Your administrator hasn’t added any hardware yet."}</p>
+              {view === "projectHardware" && <button className="secondary" onClick={() => changeView("catalog")}>Browse hardware</button>}
             </div>}
           </>}
           <footer className="catalog-footer"><span>{updatedAt ? `Last updated ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Waiting for availability"}</span></footer>

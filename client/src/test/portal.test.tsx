@@ -93,7 +93,7 @@ describe("hardware workflows", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/hardware", expect.objectContaining({ headers: { Authorization: "Bearer test-jwt" } }));
   });
 
-  it("checks out hardware, shows my checkouts, and returns it", async () => {
+  it("checks out hardware, shows the selected project's checkouts, and returns it", async () => {
     const events = userEvent.setup();
     let resources = [{ ...first }, { ...second }];
     fetchMock.mockImplementation((url, options) => {
@@ -113,11 +113,12 @@ describe("hardware workflows", () => {
     await events.selectOptions(await screen.findByLabelText("Check out to project"), project.id);
     await events.click(await screen.findByRole("button", { name: "Check out: Hardware 1" }));
     expect(await screen.findByText("Hardware 1 is now checked out to Robotics.")).toBeInTheDocument();
-    await events.click(screen.getByRole("button", { name: /My projects’ hardware/ }));
+    await events.click(screen.getByRole("button", { name: "Projects' Hardware" }));
+    await events.selectOptions(screen.getByLabelText("Hardware assigned to"), project.id);
     expect(screen.queryByRole("heading", { name: "Hardware 2" })).not.toBeInTheDocument();
     await events.click(await screen.findByRole("button", { name: "Return hardware: Hardware 1" }));
     expect(await screen.findByText("Hardware 1 returned and available for another project.")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "No hardware assigned to your projects" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No hardware checked out to this project" })).toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "Browse hardware" }));
     expect(await screen.findByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
   });

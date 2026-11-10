@@ -73,7 +73,7 @@ describe("projects and checkout destinations", () => {
       : reply(String(url).endsWith("/projects") ? { projects: [robotics] } : { hardware: [] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await screen.findByText("No hardware yet");
-    await events.click(screen.getByRole("button", { name: /^Projects/ }));
+    await events.click(screen.getByRole("button", { name: /^Projects \d+$/ }));
     await events.click(screen.getByRole("button", { name: "+ Create project" }));
     await events.type(screen.getByLabelText("Project ID"), "ROBOT-1");
     await events.type(screen.getByLabelText("Project name"), "New team");
@@ -83,23 +83,62 @@ describe("projects and checkout destinations", () => {
     expect(screen.getByLabelText("Project ID")).toHaveValue("ROBOT-1");
   });
 
-  it("shows project inventory and filters checked-out and available resources", async () => {
+  it("separates the selected project's inventory from catalog availability and checkout controls", async () => {
     const events = userEvent.setup();
-    const assigned = { ...board, id: "assigned", hardwareId: "HW-002", name: "Project board", status: "checked_out", project: robotics, canReturn: true, isCheckedOutByMyProjects: true };
-    fetchMock.mockImplementation((url) => reply(String(url).endsWith("/projects") ? { projects: [{ ...robotics, hardwareCount: 1 }, sensors] } : { hardware: [board, assigned] }));
+    const assigned: Hardware = { ...board, id: "assigned", hardwareId: "HW-002", name: "Project board", status: "checked_out", project: robotics, canReturn: true, isCheckedOutByMyProjects: true };
+    const otherAssigned: Hardware = { ...board, id: "sensor-board", hardwareId: "HW-003", name: "Sensor board", status: "checked_out", project: sensors };
+    fetchMock.mockImplementation((url) => reply(String(url).endsWith("/projects") ? { projects: [{ ...robotics, hardwareCount: 1 }, { ...sensors, hardwareCount: 1 }] } : { hardware: [board, assigned, otherAssigned] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await screen.findByRole("heading", { name: board.name });
+    expect(screen.queryByLabelText("Hardware assigned to")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("combobox")).toHaveLength(2);
+    await events.selectOptions(screen.getByLabelText("Check out to project"), robotics.id);
+    await events.selectOptions(screen.getByLabelText("Availability"), "available");
+    expect(screen.getByRole("heading", { name: board.name })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: assigned.name })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: otherAssigned.name })).not.toBeInTheDocument();
     await events.selectOptions(screen.getByLabelText("Availability"), "checked_out");
     expect(screen.queryByRole("heading", { name: board.name })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Project board" })).toBeInTheDocument();
-    await events.click(screen.getByRole("button", { name: /^Projects/ }));
+    expect(screen.getByRole("heading", { name: assigned.name })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: otherAssigned.name })).toBeInTheDocument();
+    await events.selectOptions(screen.getByLabelText("Availability"), "all");
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    await events.selectOptions(screen.getByLabelText("Availability"), "available");
+
+    await events.click(screen.getByRole("button", { name: "Projects' Hardware" }));
+    expect(screen.getByRole("heading", { name: "Projects' Hardware" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Select a project to view its hardware" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(screen.queryByLabelText("Availability")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Check out to project")).not.toBeInTheDocument();
+    await events.selectOptions(screen.getByLabelText("Hardware assigned to"), robotics.id);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: assigned.name })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Return hardware: Project board" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Check out:/ })).not.toBeInTheDocument();
+    await events.selectOptions(screen.getByLabelText("Hardware assigned to"), sensors.id);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: otherAssigned.name })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Return hardware:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Assign more hardware" })).not.toBeInTheDocument();
+
+    await events.click(screen.getByRole("button", { name: "All hardware" }));
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.queryByLabelText("Hardware assigned to")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Check out to project")).toHaveValue(robotics.id);
+    await events.click(screen.getByRole("button", { name: /^Projects \d+$/ }));
     expect(screen.getByRole("button", { name: "Delete project: Robotics" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Delete project: Sensors" })).not.toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "View hardware for Robotics" }));
+    expect(screen.getByRole("heading", { name: "Projects' Hardware" })).toBeInTheDocument();
     expect(screen.getByLabelText("Hardware assigned to")).toHaveValue(robotics.id);
     expect(screen.getByRole("heading", { name: "Project board" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: board.name })).not.toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "Assign more hardware" }));
+    expect(screen.getByRole("button", { name: "All hardware" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByLabelText("Hardware assigned to")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Availability")).toHaveValue("available");
     expect(screen.getByLabelText("Check out to project")).toHaveValue(robotics.id);
     expect(screen.getByRole("heading", { name: board.name })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Project board" })).not.toBeInTheDocument();
@@ -118,7 +157,7 @@ describe("projects and checkout destinations", () => {
     });
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await screen.findByText("No hardware yet");
-    await events.click(screen.getByRole("button", { name: /^Projects/ }));
+    await events.click(screen.getByRole("button", { name: /^Projects \d+$/ }));
     await events.click(screen.getByRole("button", { name: "Delete project: Robotics" }));
     expect(fetchMock.mock.calls.filter(([, options]) => options?.method === "DELETE")).toHaveLength(0);
     const confirmation = screen.getByRole("group", { name: "Confirm deletion of Robotics" });
@@ -134,7 +173,7 @@ describe("projects and checkout destinations", () => {
       : reply(String(url).endsWith("/projects") ? { projects: [] } : { hardware: [] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     await screen.findByText("No hardware yet");
-    await events.click(screen.getByRole("button", { name: /^Projects/ }));
+    await events.click(screen.getByRole("button", { name: /^Projects \d+$/ }));
     await events.click(screen.getByRole("button", { name: "+ Create project" }));
     await events.type(screen.getByLabelText("Project ID"), "ROBOT-1");
     await events.type(screen.getByLabelText("Project name"), "Robotics");

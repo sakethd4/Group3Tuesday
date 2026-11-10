@@ -138,6 +138,7 @@ label { display: grid; gap: 6px; font-size: 14px; }
 .checkout-project { margin-bottom: 18px; max-width: 600px; }
 .checkout-project p { margin: 8px 0 0; font-size: 14px; }
 .catalog-filters { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr); gap: 16px; margin-bottom: 18px; }
+.catalog-filters.single-filter { grid-template-columns: 1fr; max-width: 600px; }
 .project-inventory-note { font-size: 14px; }
 .project-inventory-note button { margin-left: 12px; }
 .project-list { border: 1px solid #000; }

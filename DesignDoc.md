@@ -108,11 +108,11 @@ All route `:id` values and relationship filters refer to immutable ObjectIds exp
 
 ## Frontend behavior
 
-The existing header, authentication forms, catalog rows, black-and-white styling, and hardware administration remain. Navigation adds **Projects** and **History**, and replaces personal checkouts with **My projects’ hardware**.
+The existing header, authentication forms, catalog rows, black-and-white styling, and hardware administration remain. Navigation includes **Projects**, **Projects' Hardware**, and **History**.
 
-- **All hardware:** a required joined-project selector enables checkout. Availability and project filters expose current assignment status. Return is available to every member of the assigned project.
+- **All hardware:** a required joined-project selector enables checkout. The availability filter shows all statuses, available hardware, or checked-out hardware; there is no assigned-project filter. Return is available to every member of the assigned project.
 - **Projects:** any user can create a unique project and join multiple projects. Membership, hardware counts, a My projects only filter, and View hardware are available. Delete appears only for creators and requires explicit confirmation; assigned hardware disables deletion with an explanation.
-- **Project inventory:** View hardware filters the existing catalog to the project's resources. Assign more hardware selects that project and shows available resources.
+- **Projects' Hardware:** select a project to see only hardware currently checked out to it. This view has no availability filter or checkout destination selector. View hardware in the Projects list opens this view with that project selected. Assign more hardware opens All hardware with the joined project selected as the checkout destination and availability set to Available.
 - **History:** project-filtered checkout/return events, retained after deletion; manual refresh, pagination, empty states, and retries.
 
 Hardware and projects refresh every five seconds while visible, on focus, and after mutations. Failed refreshes retain the last complete catalog/project snapshot and show a retry warning. Stale checkout or deletion attempts are rechecked by the API. Pending mutations disable duplicate actions. Forms retain user input after errors. Layouts adapt to narrow screens; history tables scroll horizontally when needed.
