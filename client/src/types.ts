@@ -9,6 +9,7 @@ export type User = {
 export type Session = { token: string; user: User };
 
 export type ProjectReference = { id: string; projectId: string; name: string };
+export type ProjectMember = Pick<User, "id" | "firstName" | "lastName">;
 export type Project = ProjectReference & {
   description: string;
   creatorId: string;
@@ -16,6 +17,8 @@ export type Project = ProjectReference & {
   isMember: boolean;
   memberCount: number;
   hardwareCount: number;
+  owner: ProjectMember | null;
+  members: ProjectMember[];
 };
 export type ProjectFields = Pick<Project, "projectId" | "name" | "description">;
 
@@ -29,7 +32,6 @@ export type Hardware = {
   isCheckedOutByMyProjects: boolean;
   canReturn: boolean;
   checkedOutAt?: string | null;
-  checkedOutBy?: User | null;
 };
 
 export type HistoryEvent = {
@@ -39,7 +41,6 @@ export type HistoryEvent = {
   project: ProjectReference;
   createdAt: string;
   isByMe: boolean;
-  actor?: User | null;
 };
 
 export type HardwareFields = Pick<Hardware, "hardwareId" | "name" | "description">;

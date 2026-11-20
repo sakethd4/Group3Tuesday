@@ -75,13 +75,17 @@ def hardware_fields(payload):
     }
 
 
-def project_fields(payload):
-    if set(payload) - {"projectId", "name", "description"}:
-        raise ApiError("Only projectId, name, and description can be supplied.")
+def project_code(payload):
     project_id = text_field(payload, "projectId", 64).upper()
     if not HARDWARE_ID_RE.fullmatch(project_id):
         raise ApiError("Project ID must use letters, numbers, hyphens, or underscores.")
-    return {"projectId": project_id, "name": text_field(payload, "name", 120),
+    return project_id
+
+
+def project_fields(payload):
+    if set(payload) - {"projectId", "name", "description"}:
+        raise ApiError("Only projectId, name, and description can be supplied.")
+    return {"projectId": project_code(payload), "name": text_field(payload, "name", 120),
             "description": text_field({"description": payload.get("description", "")}, "description", 2000, 0)}
 
 
@@ -164,16 +168,23 @@ def create_app(config=None):
         }, app.config["JWT_SECRET"], algorithm="HS256")
         return jsonify(success=True, token=token, user=usersDatabase.public_user(user)), status
 
+    def serialize_projects(records):
+        member_ids = {member_id for project in records for member_id in project["memberIds"]}
+        members = {user["_id"]: {"id": str(user["_id"]), "firstName": user["firstName"],
+                                 "lastName": user["lastName"]}
+                   for user in get_db().users.find({"_id": {"$in": list(member_ids)}},
+                                                  {"firstName": 1, "lastName": 1})}
+        return [projectsDatabase.public_project(project, g.user["_id"], members) for project in records]
+
+    def my_project_ids():
+        return [p["_id"] for p in get_db().projects.find({"memberIds": g.user["_id"]}, {"_id": 1})]
+
+    def hardware_visibility():
+        return {"$or": [{"status": "available"}, {"checkedOutTo": {"$in": my_project_ids()}}]}
+
     def serialize_hardware(records):
         project_ids = {item.get("checkedOutTo") for item in records} - {None}
         projects = {p["_id"]: p for p in get_db().projects.find({"_id": {"$in": list(project_ids)}})}
-        users = {}
-        if g.user["role"] == "admin":
-            borrower_ids = {item["checkedOutBy"] for item in records if item["checkedOutBy"]}
-            if borrower_ids:
-                users = {u["_id"]: usersDatabase.public_user(u) for u in get_db().users.find(
-                    {"_id": {"$in": list(borrower_ids)}}
-                )}
         result = []
         for item in records:
             project = projects.get(item.get("checkedOutTo"))
@@ -182,13 +193,11 @@ def create_app(config=None):
                 "id": str(item["_id"]), "hardwareId": item["hardwareId"],
                 "name": item["name"], "description": item["description"],
                 "status": item["status"],
-                "project": projectsDatabase.reference(project) if project else None,
+                "project": projectsDatabase.reference(project) if member else None,
                 "isCheckedOutByMyProjects": member,
                 "canReturn": member and item["status"] == "checked_out",
-                "checkedOutAt": item["checkedOutAt"].isoformat() if item.get("checkedOutAt") else None,
+                "checkedOutAt": item["checkedOutAt"].isoformat() if member and item.get("checkedOutAt") else None,
             }
-            if g.user["role"] == "admin":
-                entry["checkedOutBy"] = users.get(item["checkedOutBy"])
             result.append(entry)
         return result
 
@@ -264,9 +273,8 @@ def create_app(config=None):
     @app.get("/api/projects")
     @authenticate()
     def project_list():
-        query = {"memberIds": g.user["_id"]} if request.args.get("mine") == "true" else {}
-        return jsonify(projects=[projectsDatabase.public_project(p, g.user["_id"])
-                                 for p in get_db().projects.find(query).sort("projectId", 1)])
+        records = list(get_db().projects.find({"memberIds": g.user["_id"]}).sort("projectId", 1))
+        return jsonify(projects=serialize_projects(records))
 
     @app.post("/api/projects")
     @authenticate()
@@ -275,15 +283,18 @@ def create_app(config=None):
             project = projectsDatabase.createProject(get_db(), project_fields(body()), g.user["_id"])
         except DuplicateKeyError:
             raise ApiError("A project with this project ID already exists.", 409)
-        return jsonify(project=projectsDatabase.public_project(project, g.user["_id"])), 201
+        return jsonify(project=serialize_projects([project])[0]), 201
 
-    @app.post("/api/projects/<project_id>/join")
+    @app.post("/api/projects/join")
     @authenticate()
-    def join_project(project_id):
-        project = projectsDatabase.joinProject(get_db(), object_id(project_id, "Project"), g.user["_id"])
+    def join_project():
+        payload = body()
+        if set(payload) != {"projectId"}:
+            raise ApiError("Enter the project ID to join; only projectId is accepted.")
+        project = projectsDatabase.joinProject(get_db(), project_code(payload), g.user["_id"])
         if not project:
             raise ApiError("Project not found.", 404)
-        return jsonify(project=projectsDatabase.public_project(project, g.user["_id"]))
+        return jsonify(project=serialize_projects([project])[0])
 
     @app.delete("/api/projects/<project_id>")
     @authenticate()
@@ -291,59 +302,70 @@ def create_app(config=None):
         identifier = object_id(project_id, "Project")
         # Checkout increments this same document in its transaction. MongoDB's
         # write conflict handling prevents deleting a project during allocation.
-        removed = get_db().projects.delete_one({"_id": identifier, "createdBy": g.user["_id"], "hardwareCount": 0})
-        if not removed.deleted_count:
-            project = db.projects.find_one({"_id": identifier})
+        def remove(session):
+            project = db.projects.find_one_and_delete(
+                {"_id": identifier, "createdBy": g.user["_id"], "hardwareCount": 0}, session=session)
             if not project:
-                raise ApiError("Project not found.", 404)
-            if project["createdBy"] != g.user["_id"]:
-                raise ApiError("Only the creator can delete this project.", 403)
-            raise ApiError("Return this project's hardware before deleting it.", 409)
+                existing = db.projects.find_one({"_id": identifier}, session=session)
+                if not existing:
+                    raise ApiError("Project not found.", 404)
+                if existing["createdBy"] != g.user["_id"]:
+                    raise ApiError("Only the creator can delete this project.", 403)
+                raise ApiError("Return this project's hardware before deleting it.", 409)
+            # Retain history access for all members, including those who joined
+            # after the events. Event content and actor snapshots stay unchanged.
+            db.history.update_many({"project.id": str(identifier)},
+                                   {"$set": {"visibleTo": project["memberIds"]}}, session=session)
+        database.transaction(client, remove)
         return "", 204
 
     @app.get("/api/history")
     @authenticate()
     def history_list():
-        query = {}
+        query = {"$or": [
+            {"project.id": {"$in": [str(identifier) for identifier in my_project_ids()]}},
+            {"visibleTo": g.user["_id"]},
+            {"actorId": g.user["_id"]},
+        ]}
         if request.args.get("project"):
             query["project.id"] = str(object_id(request.args["project"], "Project"))
         if request.args.get("hardware"):
             query["hardware.id"] = str(object_id(request.args["hardware"]))
         if request.args.get("before"):
-            cursor = db.history.find_one({"_id": object_id(request.args["before"], "History cursor")}, {"createdAt": 1})
+            cursor = db.history.find_one({**query, "_id": object_id(request.args["before"], "History cursor")}, {"createdAt": 1})
             if not cursor:
                 raise ApiError("History cursor not found.", 404)
-            query["$or"] = [
+            query = {"$and": [query, {"$or": [
                 {"createdAt": {"$lt": cursor["createdAt"]}},
                 {"createdAt": cursor["createdAt"], "_id": {"$lt": cursor["_id"]}},
-            ]
+            ]}]}
         records = list(get_db().history.find(query).sort([("createdAt", -1), ("_id", -1)]).limit(51))
-        users = {}
-        if g.user["role"] == "admin":
-            users = {u["_id"]: usersDatabase.public_user(u) for u in db.users.find(
-                {"_id": {"$in": [r["actorId"] for r in records]}})}
         events = [{
             "id": str(r["_id"]), "action": r["action"], "hardware": r["hardware"], "project": r["project"],
             "createdAt": r["createdAt"].isoformat(), "isByMe": r["actorId"] == g.user["_id"],
-            **({"actor": users.get(r["actorId"])} if g.user["role"] == "admin" else {}),
         } for r in records[:50]]
         return jsonify(history=events, nextCursor=events[-1]["id"] if len(records) > 50 else None)
 
     @app.get("/api/hardware")
     @authenticate()
     def hardware_list():
-        query = {}
+        query = hardware_visibility()
+        if request.args.get("manage") == "true":
+            if g.user["role"] != "admin":
+                raise ApiError("Administrator permission is required.", 403)
+            query = {}
         if request.args.get("mine") == "true":
-            query["checkedOutTo"] = {"$in": [p["_id"] for p in get_db().projects.find({"memberIds": g.user["_id"]}, {"_id": 1})]}
+            query = {"checkedOutTo": {"$in": my_project_ids()}}
         if request.args.get("project"):
-            query = {"$and": [query, {"checkedOutTo": object_id(request.args["project"], "Project")}]}
+            query = {"$and": [hardware_visibility(), query,
+                               {"checkedOutTo": object_id(request.args["project"], "Project")}]}
         records = list(get_db().hardware.find(query).sort("hardwareId", 1))
         return jsonify(hardware=serialize_hardware(records))
 
     @app.get("/api/hardware/<resource_id>")
     @authenticate()
     def hardware_detail(resource_id):
-        resource = get_db().hardware.find_one({"_id": object_id(resource_id)})
+        resource = get_db().hardware.find_one({"_id": object_id(resource_id), **hardware_visibility()})
         if not resource:
             raise ApiError("Hardware not found.", 404)
         return jsonify(hardware=serialize_hardware([resource])[0])

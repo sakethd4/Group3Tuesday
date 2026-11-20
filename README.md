@@ -1,6 +1,6 @@
 # Hardware Library
 
-A Hardware as a Service portal built from the AppDevProjectTemplate. Users register, sign in, create projects, join multiple projects, and check out hardware to a joined project. Everyone can browse project inventory, see available and checked-out hardware, and review checkout/return history. Any project member can return its hardware. Only a project's creator can delete it, after its hardware has been returned. Administrators retain hardware add/edit/remove permissions and visibility of the user who recorded each checkout.
+A Hardware as a Service portal built from the AppDevProjectTemplate. Users register, sign in, create projects, join by entering a project ID, and check out hardware to a joined project. Users see only their own projects, their projects' inventory and history, and hardware available to check out. Project cards identify the owner and members by name. Any project member can return its hardware. Only a project's creator can delete it, after its hardware has been returned. Administrators retain hardware add/edit/remove permissions; other projects and checkout identities stay private.
 
 The application keeps the template's `client/` and `server/` structure. The frontend uses React/TypeScript components, the API uses Python/Flask, persistence uses MongoDB through PyMongo, and authentication uses signed JWTs through PyJWT. Vite builds the React app. React Testing Library runs with Vitest/jsdom; API tests use PyTest and a real MongoDB instance.
 
@@ -85,7 +85,7 @@ The catalog refreshes every five seconds while visible, when the tab regains foc
 
 All four databases must have different names and live on the same MongoDB deployment. The database account must have read/write and index-creation permissions on each. `MONGODB_DATABASE` is now a naming prefix and the default legacy migration source.
 
-The frontend retains its JWT in `sessionStorage` for the current tab. Sign out removes it locally; issued tokens expire after one hour. The API reads the user's current role from MongoDB on each request. Names and emails of other users remain visible only to administrators. Checkout requires a joined project's immutable `id` as `projectId` in the JSON body; it never accepts a borrower user ID. Project labels are normalized to uppercase and protected by a unique database index.
+The frontend retains its JWT in `sessionStorage` for the current tab. Sign out removes it locally; issued tokens expire after one hour. The API reads the user's current role from MongoDB on each request. Project members can see their owner and fellow members' names; email addresses and checkout actor identities are not shared. Project lists and history are restricted by membership on the server, including for administrators. Joining requires `POST /api/projects/join` with the human-readable `projectId`; internal MongoDB IDs cannot be used to join. Checkout requires a joined project's immutable `id` as `projectId` in the JSON body; it never accepts a borrower user ID. Project labels are normalized to uppercase and protected by a unique database index.
 
 ## Upgrade an existing hardware library
 
@@ -117,9 +117,15 @@ TEST_MONGODB_URI=mongodb://127.0.0.1:27018 server/.venv/bin/python -m pytest ser
 
 API tests require a replica set, create uniquely named `haas_test_*` databases, and remove only those databases afterward. They fail explicitly if MongoDB cannot be reached. Tests cover authentication, administrator CRUD, multiple memberships, unique project IDs, project-only checkout, shared returns, creator-only deletion, 12 simultaneous checkout attempts, checkout/deletion races, transaction rollback, history pagination/privacy, separate databases, and repeatable migration.
 
-React Testing Library exercises authentication, project creation/join/deletion, required checkout destinations, project inventory and availability filters, checkout/return buttons, history pagination and retries, duplicate submission prevention, automatic refresh, and administrator flows. API calls are mocked in component tests; database behavior is tested separately against MongoDB.
+React Testing Library exercises authentication, project creation/join/deletion, required checkout destinations, private project inventory and administrator availability filters, checkout/return buttons, history pagination and retries, duplicate submission prevention, automatic refresh, and administrator flows. API calls are mocked in component tests; database behavior is tested separately against MongoDB.
 
-To demonstrate the workflow, register two users in separate browser sessions. Create a project as the first user, join it as the second, and also create or join a second project. Under **All hardware**, select a joined project in **Check out to project**, then check out Hardware 1. The **Availability** filter shows available hardware, checked-out hardware, or all statuses. Open **Projects' Hardware** and select the project in **Hardware assigned to**, or use **Projects → View hardware**, to see only that project's checked-out hardware; another member can return it. Use **History** to see both events. A stale checkout receives a conflict. Only the project creator can delete the empty project; history remains after deletion. Hardware management remains administrator-only.
+To demonstrate the workflow, register two users in separate browser sessions. Create a project as the first user, then enter its **Project ID** in **Projects → Join a project** as the second user. Projects do not appear until you create or join them. Each project card shows its owner and members. Under **Available hardware**, select a joined project in **Check out to project**, then check out Hardware 1. The shared catalog lists only available items. Open **Projects' Hardware** and select your project in **Hardware assigned to**, or use **Projects → View hardware**, to see that project's checkouts; any member can return them. **History** contains only events for your projects and your own activity, with access retained for members after deletion. Administrator hardware management can display unavailable resources for editing, but does not disclose another project's identity or borrower.
+
+The application still uses email/password login and six individual resources, not multi-unit hardware sets. See [the TA checklist review](AcceptanceReview.md) for the requested 20 cases and verification evidence.
+
+## Deploy on Heroku
+
+See [HerokuSetup.md](HerokuSetup.md) for the prepared single-app deployment: React and Flask share one URL, using a cloud MongoDB database. The root build files and production entry point are ready; account access, cloud database configuration, and a live deployment are still required.
 
 ## Deploy on Vercel / AWS
 

@@ -127,18 +127,20 @@ def test_only_admin_can_manage_hardware(client, accounts, hardware):
     assert client.get(url, headers=accounts["admin"]).status_code == 404
 
 
-def test_admin_borrower_visibility_and_safe_metadata_edit(client, accounts, hardware, projects):
+def test_private_assignments_and_safe_admin_metadata_edit(client, accounts, hardware, projects):
     url = f"/api/hardware/{hardware['id']}"
     client.post(f"{url}/checkout", json={"projectId": projects["alice"]["id"]}, headers=accounts["alice"])
-    public = client.get("/api/hardware", headers=accounts["bob"]).json["hardware"][0]
-    assert "checkedOutBy" not in public
-    admin = client.get("/api/hardware", headers=accounts["admin"]).json["hardware"][0]
-    assert admin["checkedOutBy"]["email"] == "alice@example.com"
-    assert "passwordHash" not in admin["checkedOutBy"]
+    assert client.get("/api/hardware", headers=accounts["bob"]).json["hardware"] == []
+    assert client.get("/api/hardware", headers=accounts["admin"]).json["hardware"] == []
+    assert client.get("/api/hardware?manage=true", headers=accounts["bob"]).status_code == 403
+    admin = client.get("/api/hardware?manage=true", headers=accounts["admin"]).json["hardware"][0]
+    assert "checkedOutBy" not in admin
+    assert admin["project"] is None and admin["checkedOutAt"] is None
     fields = {"hardwareId": "HW-001", "name": "Updated name", "description": "Updated description"}
     updated = client.put(url, json=fields, headers=accounts["admin"])
     assert updated.json["hardware"]["status"] == "checked_out"
-    assert updated.json["hardware"]["checkedOutBy"] == admin["checkedOutBy"]
+    assert "checkedOutBy" not in updated.json["hardware"]
+    assert updated.json["hardware"]["project"] is None
     assert client.put(url, json={**fields, "status": "available"}, headers=accounts["admin"]).status_code == 400
     assert client.delete(url, headers=accounts["admin"]).status_code == 409
     client.post(f"{url}/return", headers=accounts["alice"])

@@ -6,15 +6,28 @@ export default function ProjectsPanel({ projects, busy, onCreate, onJoin, onDele
   projects: Project[];
   busy: boolean;
   onCreate: (fields: ProjectFields) => Promise<void>;
-  onJoin: (project: Project) => void;
+  onJoin: (projectId: string) => Promise<void>;
   onDelete: (project: Project) => void;
   onView: (project: Project) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
-  const [onlyMine, setOnlyMine] = useState(false);
-  const visible = projects.filter((project) => !onlyMine || project.isMember);
+  const [joinId, setJoinId] = useState("");
+  const [joinError, setJoinError] = useState("");
+  const visible = projects.filter((project) => project.isMember);
+
+  async function join(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !joinId.trim()) return;
+    setJoinError("");
+    try {
+      await onJoin(joinId.trim());
+      setJoinId("");
+    } catch (cause) {
+      setJoinError(errorMessage(cause));
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,9 +44,18 @@ export default function ProjectsPanel({ projects, busy, onCreate, onJoin, onDele
 
   return <section aria-label="Projects">
     <div className="catalog-toolbar">
-      <label className="checkbox-label"><input type="checkbox" checked={onlyMine} onChange={(event) => setOnlyMine(event.target.checked)} />My projects only</label>
+      <span>My projects</span>
       <button disabled={busy} onClick={() => { setCreating(true); setError(""); }}>+ Create project</button>
     </div>
+    <section className="hardware-editor" aria-labelledby="join-project-title">
+      <h2 id="join-project-title">Join a project</h2>
+      <form className="form-stack" onSubmit={join}>
+        <label>Project ID to join<input name="joinProjectId" value={joinId} onChange={(event) => setJoinId(event.target.value)} maxLength={64} pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]*" placeholder="Enter the project ID" required disabled={busy} /></label>
+        <p className="field-hint">Ask the project owner for its ID. Only projects you belong to appear here.</p>
+        {joinError && <p className="message error" role="alert">{joinError}</p>}
+        <div className="form-actions"><button disabled={busy || !joinId.trim()}>Join project</button></div>
+      </form>
+    </section>
     {creating && <section className="hardware-editor" aria-labelledby="project-editor-title">
       <h2 id="project-editor-title">Create project</h2>
       <form className="form-stack" onSubmit={submit}>
@@ -56,10 +78,11 @@ export default function ProjectsPanel({ projects, busy, onCreate, onJoin, onDele
         <h2 id={`project-${project.id}`}>{project.name}</h2>
         <p className="hardware-description">{project.description}</p>
         <p className="project-meta">{project.isCreator ? "Created by you · " : project.isMember ? "Member · " : ""}{project.memberCount} {project.memberCount === 1 ? "member" : "members"} · {project.hardwareCount} hardware assigned</p>
+        <p className="project-meta">Owner: {project.owner ? `${project.owner.firstName} ${project.owner.lastName}` : "Account unavailable"}</p>
+        <p className="project-meta">Members: {project.members.map((member) => `${member.firstName} ${member.lastName}`).join(", ")}</p>
       </div>
       <div className="project-actions">
         <button className="secondary" disabled={busy} onClick={() => onView(project)}>View hardware<span className="sr-only"> for {project.name}</span></button>
-        {!project.isMember && <button aria-label={`Join project: ${project.name}`} disabled={busy} onClick={() => onJoin(project)}>Join project</button>}
         {project.isCreator && <button aria-label={`Delete project: ${project.name}`} className="text-button" disabled={busy || project.hardwareCount > 0} onClick={() => setConfirming(project.id)}
           title={project.hardwareCount > 0 ? "Return this project's hardware before deleting it." : undefined}>Delete project</button>}
         {project.isCreator && project.hardwareCount > 0 && <small>Return assigned hardware to delete this project.</small>}
@@ -69,6 +92,6 @@ export default function ProjectsPanel({ projects, busy, onCreate, onJoin, onDele
           <button className="secondary" disabled={busy} onClick={() => setConfirming(null)}>Cancel</button>
         </div>}
       </div>
-    </article>)}</div> : <div className="empty-state"><h2>{onlyMine ? "No joined projects yet" : "No projects yet"}</h2><p>Create a project or join one to check out hardware.</p></div>}
+    </article>)}</div> : <div className="empty-state"><h2>No projects yet</h2><p>Create a project or enter a project ID above to join one.</p></div>}
   </section>;
 }

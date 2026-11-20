@@ -11,7 +11,7 @@ import { Hardware, Project, Session, User } from "../types";
 const user: User = { id: "user-1", firstName: "Alex", lastName: "User", email: "alex@example.com", role: "user" };
 const session: Session = { token: "test-jwt", user };
 const admin: Session = { token: "admin-jwt", user: { ...user, id: "admin-1", role: "admin" } };
-const project: Project = { id: "project-1", projectId: "PROJ-001", name: "Robotics", description: "Team project", creatorId: user.id, isCreator: true, isMember: true, memberCount: 1, hardwareCount: 0 };
+const project: Project = { id: "project-1", projectId: "PROJ-001", name: "Robotics", description: "Team project", creatorId: user.id, isCreator: true, isMember: true, memberCount: 1, hardwareCount: 0, owner: user, members: [user] };
 const first: Hardware = { id: "resource-1", hardwareId: "HW-001", name: "Hardware 1", description: "Shared hardware resource 1.", status: "available", isCheckedOutByMyProjects: false, canReturn: false, project: null };
 const second: Hardware = { id: "resource-2", hardwareId: "HW-002", name: "Hardware 2", description: "Shared hardware resource 2.", status: "checked_out", isCheckedOutByMyProjects: false, canReturn: false, project: null };
 const fetchMock = vi.fn<typeof fetch>();
@@ -80,7 +80,7 @@ describe("account forms", () => {
 });
 
 describe("hardware workflows", () => {
-  it("shows resource information and disables checkout of unavailable hardware", async () => {
+  it("shows available resources and hides other checkouts", async () => {
     fetchMock.mockImplementation(() => reply({ projects: [project], hardware: [first, second] }));
     render(<HardwarePage session={session} onSignOut={vi.fn()} />);
     expect(await screen.findByRole("heading", { name: "Hardware 1" })).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe("hardware workflows", () => {
     expect(screen.getByText(first.description)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Check out to project"), { target: { value: project.id } });
     expect(screen.getByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Unavailable: Hardware 2" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "Hardware 2" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Manage hardware" })).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/hardware", expect.objectContaining({ headers: { Authorization: "Bearer test-jwt" } }));
   });
@@ -137,7 +137,7 @@ describe("hardware workflows", () => {
     await events.selectOptions(await screen.findByLabelText("Check out to project"), project.id);
     await events.click(await screen.findByRole("button", { name: "Check out: Hardware 1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("already checked out");
-    expect(await screen.findByRole("button", { name: "Unavailable: Hardware 1" })).toBeDisabled();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Hardware 1" })).not.toBeInTheDocument());
   });
 
   it("prevents repeated checkout submissions while a request is pending", async () => {
@@ -164,7 +164,7 @@ describe("hardware workflows", () => {
     expect(screen.getByRole("button", { name: "Check out: Hardware 1" })).toBeEnabled();
     item = { ...first, status: "checked_out" };
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(screen.getByRole("button", { name: "Unavailable: Hardware 1" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "Hardware 1" })).not.toBeInTheDocument();
   });
 
   it("allows a slow availability request to finish instead of aborting it on every poll", async () => {
@@ -190,9 +190,9 @@ describe("hardware workflows", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("lets administrators add, edit, and remove hardware and see borrowers", async () => {
+  it("lets administrators manage hardware without seeing borrowers", async () => {
     const events = userEvent.setup();
-    let resources: Hardware[] = [{ ...second, checkedOutBy: user }];
+    let resources: Hardware[] = [second];
     fetchMock.mockImplementation((url, options) => {
       if (options?.method === "POST") {
         const fields = JSON.parse(String(options.body));
@@ -212,8 +212,9 @@ describe("hardware workflows", () => {
       return reply({ projects: [project], hardware: resources });
     });
     render(<HardwarePage session={admin} onSignOut={vi.fn()} />);
-    expect(await screen.findByText("Checked out by: Alex User")).toBeInTheDocument();
-    expect(screen.getByText(user.email)).toBeInTheDocument();
+    await screen.findByText("No hardware available");
+    expect(screen.queryByText(/Checked out by:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(user.email)).not.toBeInTheDocument();
     await events.click(screen.getByRole("button", { name: "Manage hardware" }));
     expect(screen.getByRole("button", { name: "Remove Hardware 2" })).toBeDisabled();
     await events.click(screen.getByRole("button", { name: "+ Add hardware" }));
@@ -239,7 +240,7 @@ describe("hardware workflows", () => {
       ? reply({ message: "A resource with this hardware ID already exists." }, 409)
       : reply({ projects: [project], hardware: [] }));
     render(<HardwarePage session={admin} onSignOut={vi.fn()} />);
-    await screen.findByText("No hardware yet");
+    await screen.findByText("No hardware available");
     await events.click(screen.getByRole("button", { name: "Manage hardware" }));
     await events.click(screen.getByRole("button", { name: "+ Add hardware" }));
     await events.type(screen.getByLabelText("Hardware ID"), "HW-001");

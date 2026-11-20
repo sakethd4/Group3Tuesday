@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Hardware, Project } from "../types";
 
-export default function useHardware(token: string) {
+export default function useHardware(token: string, managing = false) {
   const [hardware, setHardware] = useState<Hardware[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +16,7 @@ export default function useHardware(token: string) {
     activeRequest.current = controller;
     try {
       const [result, projectResult] = await Promise.all([
-        api<{ hardware: Hardware[] }>("/hardware", { signal: controller.signal }, token),
+        api<{ hardware: Hardware[] }>(managing ? "/hardware?manage=true" : "/hardware", { signal: controller.signal }, token),
         api<{ projects: Project[] }>("/projects", { signal: controller.signal }, token),
       ]);
       if (controller.signal.aborted) return;
@@ -30,7 +30,7 @@ export default function useHardware(token: string) {
       if (activeRequest.current === controller) activeRequest.current = null;
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [token]);
+  }, [token, managing]);
 
   useEffect(() => {
     void refresh();

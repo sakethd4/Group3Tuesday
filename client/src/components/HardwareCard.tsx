@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Hardware } from "../types";
 
-export default function HardwareCard({ hardware, admin, managing, busy, checkoutReady, onCheckout, onReturn, onEdit, onRemove }: {
+export default function HardwareCard({ hardware, managing, busy, checkoutReady, onCheckout, onReturn, onEdit, onRemove }: {
   hardware: Hardware;
-  admin: boolean;
   managing: boolean;
   busy: boolean;
   checkoutReady: boolean;
@@ -14,7 +13,6 @@ export default function HardwareCard({ hardware, admin, managing, busy, checkout
 }) {
   const [confirming, setConfirming] = useState(false);
   const available = hardware.status === "available";
-  const borrower = hardware.checkedOutBy;
   return (
     <article className={`hardware-card ${hardware.isCheckedOutByMyProjects ? "hardware-mine" : ""}`} aria-labelledby={`hardware-${hardware.id}`}>
       <div className="resource-details">
@@ -29,7 +27,6 @@ export default function HardwareCard({ hardware, admin, managing, busy, checkout
         <div className="card-assignment">
           {hardware.project ? <span>Project: {hardware.project.name}<br />{hardware.project.projectId}</span>
             : available ? <span>Ready to check out to a project</span> : null}
-          {admin && borrower && <span className="borrower">Checked out by: {borrower.firstName} {borrower.lastName}<small>{borrower.email}</small></span>}
         </div>
       </div>
       {managing ? (

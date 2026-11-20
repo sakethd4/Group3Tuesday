@@ -1,0 +1,16 @@
+.env
+.env.*
+server/.env
+server/.env.*
+client/.env
+client/.env.*
+.aws/
+.mongodb/
+.venv/
+server/.venv/
+node_modules/
+client/node_modules/
+client/dist/
+**/__pycache__/
+.pytest_cache/
+server/.pytest_cache/

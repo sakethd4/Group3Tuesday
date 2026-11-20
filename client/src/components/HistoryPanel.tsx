@@ -41,7 +41,7 @@ export default function HistoryPanel({ token, projects }: { token: string; proje
   return <section aria-label="Checkout history">
     <div className="catalog-toolbar">
       <label>History for project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-        <option value="">All projects (including deleted)</option>
+        <option value="">My projects (including deleted)</option>
         {projects.map((project) => <option key={project.id} value={project.id}>{project.projectId} — {project.name}</option>)}
       </select></label>
       <button className="secondary" disabled={loading} onClick={() => void load()}>Refresh history</button>
@@ -55,7 +55,7 @@ export default function HistoryPanel({ token, projects }: { token: string; proje
         <td>{event.action === "checkout" ? "Checked out" : event.action === "return" ? "Returned" : "Imported checkout"}</td>
         <td>{event.hardware.name}<small>{event.hardware.hardwareId}</small></td>
         <td>{event.project.name}<small>{event.project.projectId}</small></td>
-        <td>{event.actor ? `${event.actor.firstName} ${event.actor.lastName}` : event.isByMe ? "You" : "Project member"}</td>
+        <td>{event.isByMe ? "You" : "Project member"}</td>
       </tr>)}</tbody>
     </table></div>}
     {loading && <p role="status">Loading history…</p>}

@@ -2,9 +2,9 @@
 
 ## Purpose and scope
 
-Organizations share individual physical hardware resources. Users create accounts, sign in, create projects, join any number of projects, and check out available hardware to a project they have joined. Each resource belongs to at most one project at a time. Project members can view their shared inventory and return hardware, regardless of which member checked it out. All authenticated users can browse projects, resource availability, and checkout/return history.
+Organizations share individual physical hardware resources. Users create accounts, sign in, create projects, join any number of projects, and check out available hardware to a project they have joined. Each resource belongs to at most one project at a time. Project members can view their shared inventory and return hardware, regardless of which member checked it out. Authenticated users see only projects they have created or joined, their projects' inventory/history, and available hardware. Joining requires entering the human-readable project ID.
 
-Project creation is open to every authenticated user. Only the creator may delete a project, and all assigned hardware must first be returned. Administrators retain hardware add/edit/remove permissions and visibility of checkout actors. The initial sample catalog remains Hardware 1 through Hardware 6; resource states remain **Available** and **Checked out**. Authentication, branding, and the existing catalog design are preserved.
+Project creation is open to every authenticated user. Only the creator may delete a project, and all assigned hardware must first be returned. Administrators retain hardware add/edit/remove permissions without visibility of other projects or checkout actors. The initial sample catalog remains Hardware 1 through Hardware 6; resource states remain **Available** and **Checked out**. Authentication, branding, and the existing catalog design are preserved.
 
 ## Team and cadence
 
@@ -44,7 +44,7 @@ Flask / PyMongo / PyJWT
 | `hardwareCount` | Number of resources assigned to the project; updated transactionally with checkout/return. |
 | `createdAt` | UTC creation timestamp. |
 
-Joining uses `$addToSet`, making repeated joins idempotent. There is no one-project-per-user restriction. Public project objects include `creatorId`, `isCreator`, `isMember`, `memberCount`, and `hardwareCount` without exposing the membership list or other users' account details.
+Joining looks up the entered `projectId` and uses `$addToSet`, making repeated joins idempotent. There is no one-project-per-user restriction. Only members receive project objects. These include `creatorId`, `isCreator`, `isMember`, `memberCount`, `hardwareCount`, `owner`, and `members`. Owner/member objects contain only `id`, `firstName`, and `lastName`; they do not expose emails, roles, or password hashes.
 
 ### Hardware
 
@@ -54,16 +54,16 @@ Each document represents one physical resource. Existing metadata fields (`_id`,
 | --- | --- |
 | `status` | `available` or `checked_out`. |
 | `checkedOutTo` | Project ObjectId, or null when available; indexed. This is the resource owner. |
-| `checkedOutBy` | Authenticated actor who performed checkout, retained for audit/admin visibility. This does not grant return rights. |
+| `checkedOutBy` | Authenticated actor who performed checkout, retained internally for auditing; never returned by the API. This does not grant return rights. |
 | `checkedOutAt` | UTC checkout timestamp, or null when available or importing an unknown original timestamp. |
 
-The public response contains `project` (`id`, `projectId`, `name`) or null, `isCheckedOutByMyProjects`, `canReturn`, and `checkedOutAt`. Administrators also receive the current checkout actor as `checkedOutBy`. Regular users never receive another user's account details.
+The public response contains `project` (`id`, `projectId`, `name`) or null, `isCheckedOutByMyProjects`, `canReturn`, and `checkedOutAt`. Project references and checkout timestamps are returned only to project members. Default hardware responses include available hardware and joined-project inventory; direct reads hide unrelated checkouts. Administrators may use `?manage=true` to edit all resource metadata, but unrelated assignments remain redacted and borrower identities are never returned.
 
 ### History
 
-Each event stores `_id`, `action` (`checkout`, `return`, or `migrated_checkout`), `createdAt`, `actorId`, and hardware/project snapshots containing their immutable identities, human-readable IDs, and names. Events are not edited or deleted by the API. Snapshots preserve the meaning of old entries after metadata changes or hardware/project deletion. The history database is separate from all entity databases.
+Each event stores `_id`, `action` (`checkout`, `return`, or `migrated_checkout`), `createdAt`, `actorId`, and hardware/project snapshots containing their immutable identities, human-readable IDs, and names. Event content is not edited or deleted by the API. Deleting an empty project records its final member IDs in each event's `visibleTo` access field within the deletion transaction, preserving private history access for those members. Snapshots preserve the meaning of old entries after metadata changes or hardware/project deletion. The history database is separate from all entity databases.
 
-History is available to authenticated users and sorted by event time, newest first, with ObjectId as the tie-breaker. Requests return at most 50 entries and a `nextCursor` for older events. Optional project and hardware filters use immutable identities, so reused display labels cannot merge separate records' history. Regular users receive `isByMe`; administrators additionally receive the actor's public user object. The UI displays local time from stored UTC timestamps.
+History is restricted to current joined projects, events recorded by the user, and deleted-project history explicitly visible to that user. It is sorted by event time, newest first, with ObjectId as the tie-breaker. Requests return at most 50 entries and a `nextCursor` for older events. Optional project and hardware filters use immutable identities, so reused display labels cannot merge separate records' history. All users receive only `isByMe`, never another actor's identity. Pagination cursors are resolved within the same access filter. The UI displays local time from stored UTC timestamps.
 
 ## Consistency and authorization
 
@@ -79,7 +79,7 @@ Return similarly checks current project membership, decrements the project count
 
 Project deletion atomically matches creator identity and a zero hardware count. Since checkout writes that same project document, a checkout/deletion race either keeps the project with its assignment or deletes the project and rejects checkout. Administrator status does not override project deletion ownership or return membership. Available-hardware deletion remains a conditional atomic operation, preventing checkout/removal races.
 
-JWTs require HS256, issuer, audience, issued-at, expiry, and a valid user subject. They expire after one hour; the current account and role are read from MongoDB for every authenticated request. Other users' names/emails are administrator-only. All responses disable caching; CORS remains restricted to configured frontend origins.
+JWTs require HS256, issuer, audience, issued-at, expiry, and a valid user subject. They expire after one hour; the current account and role are read from MongoDB for every authenticated request. Project members may see one another's names. Other users' emails and checkout identities are not exposed. All responses disable caching; CORS remains restricted to configured frontend origins.
 
 ## API contract
 
@@ -90,29 +90,29 @@ Errors use `{ "success": false, "message": "Explanation" }`. Status codes: `400`
 | POST | `/api/register` | Public; unchanged account fields, returns session (`201`). |
 | POST | `/api/login` | Public; email/password, returns session. |
 | GET | `/api/me` | Authenticated; current public user. |
-| GET | `/api/projects` | Authenticated; all projects, or `?mine=true` for joined projects. |
+| GET | `/api/projects` | Authenticated; joined projects only, regardless of query parameters. |
 | POST | `/api/projects` | Authenticated; `projectId`, `name`, optional `description`; creator auto-joins (`201`). |
-| POST | `/api/projects/:id/join` | Authenticated; joins idempotently. |
+| POST | `/api/projects/join` | Authenticated; requires `{ "projectId": "<human-readable project ID>" }`; joins idempotently. |
 | DELETE | `/api/projects/:id` | Creator only; no assigned hardware. |
-| GET | `/api/hardware` | Authenticated; optionally `?mine=true` for joined-project inventory or `?project=<id>`. |
-| GET | `/api/hardware/:id` | Authenticated; one resource with current project and return permission. |
+| GET | `/api/hardware` | Authenticated; available plus joined-project hardware; `?mine=true` or `?project=<id>` narrows this scope. Admin-only `?manage=true` lists metadata without unrelated assignments. |
+| GET | `/api/hardware/:id` | Authenticated; available or joined-project resource only; unrelated checkouts return 404. |
 | POST | `/api/hardware/:id/checkout` | Project member; requires `projectId` containing immutable project `id`. |
 | POST | `/api/hardware/:id/return` | Member of the assigned project; no caller-supplied user ID. |
 | POST | `/api/hardware` | Admin; `hardwareId`, `name`, `description` (`201`). |
 | PUT | `/api/hardware/:id` | Admin; all three metadata fields, preserving current assignment. |
 | DELETE | `/api/hardware/:id` | Admin; available hardware only. |
-| GET | `/api/history` | Authenticated; optional `project`, `hardware`, `before` filters; `{history, nextCursor}`. |
+| GET | `/api/history` | Authenticated; private history only; optional `project`, `hardware`, `before` filters; `{history, nextCursor}`. |
 | GET | `/api/health` | Public; database/index connectivity. |
 
-All route `:id` values and relationship filters refer to immutable ObjectIds exposed as `id`, not display labels. In the checkout body, the `projectId` key contains this immutable `id`; in project creation it contains the unique human-readable label.
+All route `:id` values and relationship filters refer to immutable ObjectIds exposed as `id`, not display labels. In the checkout body, the `projectId` key contains this immutable `id`; in project creation and joining it contains the unique human-readable label.
 
 ## Frontend behavior
 
 The existing header, authentication forms, catalog rows, black-and-white styling, and hardware administration remain. Navigation includes **Projects**, **Projects' Hardware**, and **History**.
 
-- **All hardware:** a required joined-project selector enables checkout. The availability filter shows all statuses, available hardware, or checked-out hardware; there is no assigned-project filter. Return is available to every member of the assigned project.
-- **Projects:** any user can create a unique project and join multiple projects. Membership, hardware counts, a My projects only filter, and View hardware are available. Delete appears only for creators and requires explicit confirmation; assigned hardware disables deletion with an explanation.
-- **Projects' Hardware:** select a project to see only hardware currently checked out to it. This view has no availability filter or checkout destination selector. View hardware in the Projects list opens this view with that project selected. Assign more hardware opens All hardware with the joined project selected as the checkout destination and availability set to Available.
+- **Available hardware:** only available items appear. A required joined-project selector enables checkout. Project checkouts and returns are accessed in Projects' Hardware. Administrator management retains its availability filter.
+- **Projects:** any user can create a unique project and join multiple projects by entering their IDs. Only joined projects are listed. Cards show owner/member names, membership, hardware counts, and View hardware. Delete appears only for creators and requires explicit confirmation; assigned hardware disables deletion with an explanation.
+- **Projects' Hardware:** select a joined project to see only hardware currently checked out to it. This view has no availability filter or checkout destination selector. View hardware in the Projects list opens this view with that project selected. Assign more hardware opens Available hardware with the joined project selected as the checkout destination.
 - **History:** project-filtered checkout/return events, retained after deletion; manual refresh, pagination, empty states, and retries.
 
 Hardware and projects refresh every five seconds while visible, on focus, and after mutations. Failed refreshes retain the last complete catalog/project snapshot and show a retry warning. Stale checkout or deletion attempts are rechecked by the API. Pending mutations disable duplicate actions. Forms retain user input after errors. Layouts adapt to narrow screens; history tables scroll horizontally when needed.

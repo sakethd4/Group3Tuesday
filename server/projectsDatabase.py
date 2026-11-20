@@ -8,12 +8,14 @@ def reference(project):
     return {"id": str(project["_id"]), "projectId": project["projectId"], "name": project["name"]}
 
 
-def public_project(project, user_id):
+def public_project(project, user_id, members):
     return {
         **reference(project), "description": project["description"],
         "creatorId": str(project["createdBy"]), "isCreator": project["createdBy"] == user_id,
         "isMember": user_id in project["memberIds"], "memberCount": len(project["memberIds"]),
         "hardwareCount": project["hardwareCount"],
+        "owner": members.get(project["createdBy"]),
+        "members": [members[member_id] for member_id in project["memberIds"] if member_id in members],
     }
 
 
@@ -28,6 +30,6 @@ def createProject(db, fields, user_id):
 
 def joinProject(db, project_id, user_id):
     return db.projects.find_one_and_update(
-        {"_id": project_id}, {"$addToSet": {"memberIds": user_id}},
+        {"projectId": project_id}, {"$addToSet": {"memberIds": user_id}},
         return_document=ReturnDocument.AFTER,
     )

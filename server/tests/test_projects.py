@@ -19,7 +19,7 @@ def test_projects_are_unique_and_users_can_join_multiple(client, accounts, proje
     assert duplicate.status_code == 409
     assert "project ID" in duplicate.json["message"]
     for _ in range(2):
-        joined = client.post(f"/api/projects/{bob['id']}/join", headers=accounts["alice"])
+        joined = client.post("/api/projects/join", json={"projectId": " proj-bob "}, headers=accounts["alice"])
         assert joined.status_code == 200
         assert joined.json["project"]["memberCount"] == 2
         assert joined.json["project"]["isMember"] and not joined.json["project"]["isCreator"]
@@ -44,7 +44,7 @@ def test_checkout_requires_membership_and_members_share_inventory(client, accoun
     assert client.post(f"{url}/checkout", json={"projectId": alice["id"], "userId": "someone"}, headers=accounts["alice"]).status_code == 400
     assert client.post(f"{url}/checkout", json={"projectId": alice["id"]}, headers=accounts["alice"]).status_code == 200
     assert client.get(f"/api/hardware?mine=true&project={alice['id']}", headers=accounts["bob"]).json["hardware"] == []
-    client.post(f"/api/projects/{alice['id']}/join", headers=accounts["bob"])
+    client.post("/api/projects/join", json={"projectId": alice["projectId"]}, headers=accounts["bob"])
     for path in ("/api/hardware?mine=true", f"/api/hardware?project={alice['id']}"):
         resources = client.get(path, headers=accounts["bob"]).json["hardware"]
         assert len(resources) == 1
@@ -57,7 +57,7 @@ def test_checkout_requires_membership_and_members_share_inventory(client, accoun
     assert [e["isByMe"] for e in events] == [False, True]
     assert all("actor" not in e for e in events)
     admin_events = client.get("/api/history", headers=accounts["admin"]).json["history"]
-    assert [e["actor"]["email"] for e in admin_events] == ["bob@example.com", "alice@example.com"]
+    assert admin_events == []
 
 
 def test_only_creator_can_delete_and_history_survives_deletion(client, accounts, projects, hardware, db):
@@ -199,5 +199,54 @@ def test_project_validation(client, accounts, payload):
 def test_project_routes_require_authentication(client):
     assert client.get("/api/projects").status_code == 401
     assert client.post("/api/projects", json={"projectId": "TEST", "name": "Test"}).status_code == 401
-    assert client.post(f"/api/projects/{ObjectId()}/join").status_code == 401
+    assert client.post("/api/projects/join", json={"projectId": "TEST"}).status_code == 401
     assert client.delete(f"/api/projects/{ObjectId()}").status_code == 401
+
+
+@pytest.mark.parametrize('payload', [None, {}, {'projectId': ''}, {'projectId': {'$ne': ''}},
+                                     {'projectId': 'PROJ-alice', 'userId': 'alice'}, {'projectId': 'bad id'}])
+def test_join_requires_a_valid_project_code(client, accounts, projects, payload):
+    assert client.post('/api/projects/join', json=payload, headers=accounts['bob']).status_code == 400
+    assert len(client.get('/api/projects', headers=accounts['bob']).json['projects']) == 1
+
+
+def test_project_privacy_and_owner_member_names(client, accounts, projects):
+    alice = projects['alice']
+    for suffix in ('', '?mine=false', '?mine=true'):
+        visible = client.get(f'/api/projects{suffix}', headers=accounts['alice']).json['projects']
+        assert [p['id'] for p in visible] == [alice['id']]
+        assert visible[0]['owner']['firstName'] == 'Alice'
+        assert visible[0]['members'] == [visible[0]['owner']]
+        assert set(visible[0]['owner']) == {'id', 'firstName', 'lastName'}
+    assert client.get('/api/projects', headers=accounts['admin']).json['projects'] == []
+    # Neither knowing a MongoDB ID nor calling the old join route grants access.
+    assert client.post('/api/projects/join', headers=accounts['bob'], json={'projectId': alice['id']}).status_code == 404
+    assert client.post(f"/api/projects/{alice['id']}/join", headers=accounts['bob']).status_code == 404
+    assert client.post('/api/projects/join', headers=accounts['bob'], json={'projectId': 'UNKNOWN'}).status_code == 404
+    joined = client.post('/api/projects/join', headers=accounts['bob'], json={'projectId': alice['projectId']}).json['project']
+    assert joined['owner']['firstName'] == 'Alice'
+    assert [member['firstName'] for member in joined['members']] == ['Alice', 'Bob']
+
+
+def test_hardware_and_history_cannot_reveal_other_projects(client, accounts, projects, hardware, db):
+    project = projects['alice']
+    url = f"/api/hardware/{hardware['id']}"
+    assert client.post(f'{url}/checkout', json={'projectId': project['id']}, headers=accounts['alice']).status_code == 200
+    event_id = str(db.history.find_one({})['_id'])
+    for name in ('bob', 'admin'):
+        headers = accounts[name]
+        for suffix in ('', '?mine=false', '?mine=true', f"?project={project['id']}"):
+            assert client.get(f'/api/hardware{suffix}', headers=headers).json['hardware'] == []
+        assert client.get(url, headers=headers).status_code == 404
+        for suffix in ('', f"?project={project['id']}", f"?hardware={hardware['id']}"):
+            assert client.get(f'/api/history{suffix}', headers=headers).json['history'] == []
+        assert client.get(f'/api/history?before={event_id}', headers=headers).status_code == 404
+    assert client.post('/api/projects/join', json={'projectId': project['projectId']}, headers=accounts['bob']).status_code == 200
+    assert client.get(url, headers=accounts['bob']).json['hardware']['canReturn']
+    assert len(client.get('/api/history', headers=accounts['bob']).json['history']) == 1
+    assert client.post(f'{url}/return', headers=accounts['bob']).status_code == 200
+    assert len(client.get('/api/hardware', headers=accounts['admin']).json['hardware']) == 1
+    assert client.delete(f"/api/projects/{project['id']}", headers=accounts['alice']).status_code == 204
+    for name in ('alice', 'bob'):
+        assert len(client.get('/api/history', headers=accounts[name]).json['history']) == 2
+    assert client.get('/api/history', headers=accounts['admin']).json['history'] == []
